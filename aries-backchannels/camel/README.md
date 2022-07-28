@@ -15,11 +15,20 @@
 ## Run Tests
 
 ```
-# Run a basic RFC0160 connection test using ACA-Py for Acme, Bob, Faber and Mallory
+# Establish a connection between two agents
 ./manage test -d acapy -b camel -t @T001-RFC0160
+
+# Issue a credential with the Issuer beginning with an offer
+./manage test -d acapy -b camel -t @T003-RFC0036
 ```
 
-## Aries Interop Profile 1.0 - Status
+Run all supported tests
+
+```
+./manage test -d acapy -b camel -t @T001-RFC0160,@T003-RFC0036
+```
+
+## Status AIP-1.0
 
 | Status | Feature: RFC 0025 DIDComm Transports
 |:------:|:-------------------------------------|
@@ -32,7 +41,7 @@
 
 | Status | Feature: RFC 0036 Aries agent issue credential
 |:------:|:-----------------------------------------------|
-|        |  @T001-RFC0036 @AIP10
+|   x    |  @T001-RFC0036 @AIP10
 |        |  Scenario: Issue a credential with the Holder beginning with a proposal
 |        |  @T002-RFC0036 @AIP10
 |        |  Scenario: Issue a credential with the Holder beginning with a proposal with negotiation
@@ -71,7 +80,7 @@
 | Status | Feature: RFC 0160 Aries agent connection functions
 |:------:|:---------------------------------------------------|
 |   x    |  @T001-RFC0160
-|        |  Scenario: establish a connection between two agents
+|        |  Scenario: Establish a connection between two agents
 |        |  @T002-RFC0160
 |        |  Scenario: Connection established between two agents but inviter sends next message to establish full connection state
 |        |  @T003-RFC0160

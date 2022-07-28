@@ -3,6 +3,7 @@ import logging
 import io
 import os
 import pathlib
+import requests
 import subprocess
 import sys
 import time
@@ -82,19 +83,21 @@ async def main(start_port: int):
         http=start_port + 1,
         admin=start_port + 2,
         # webhook=start_port + 3,
-        ws=start_port + 4,
+        ws=start_port + 2,
     )
     log.info("AgentPorts: %s", agent_ports)
 
     agent = CamelAgentBackchannel('camel', agent_ports)
 
-    async def run_acapy_process():
+    async def run_acapy_process(readiness_future):
         await agent.register_did()
         log.info("Starting: acapy process ...")
         proc = subprocess.Popen(
             ['./camel/bin/run-acapy.sh', 'start',
                 '--label', f'camel.{AGENT_NAME}',
-                '--auto-accept-requests',
+                '--endpoint', f'{agent.get_agent_endpoint("http")}',
+                '--inbound-transport', 'http', '0.0.0.0', f'{agent_ports["http"]}',
+                '--outbound-transport', 'http',
                 '--admin', '0.0.0.0', f'{agent_ports["admin"]}',
                 '--admin-insecure-mode',
                 '--public-invites',
@@ -114,12 +117,31 @@ async def main(start_port: int):
                 #'--tails-server-base-url', 'http://host.docker.internal:6543',
                 #'--plugin', 'universal_resolver',
                 #'--plugin-config', '/data-mount/plugin-config.yml',
-                '--endpoint', f'{agent.get_agent_endpoint("http")}',
-                '--inbound-transport', 'http', '0.0.0.0', f'{agent_ports["http"]}',
-                '--outbound-transport', 'http',
+                '--auto-accept-requests',
                 '--log-level', os.getenv("LOG_LEVEL", "info")],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        await asyncio.to_thread(read_process_stdout, "acapy", proc)
+
+        # Start the stdout reaper thread
+        coro_stdout = asyncio.to_thread(read_process_stdout, "acapy", proc)
+
+        async def query_features(readiness_future):
+            status_code = count = 0
+            while count < 40 and status_code != 200:
+                count += 1
+                try:
+                    adminUrl = f'http://{agent.internal_host}:{agent_ports["admin"]}'
+                    req = requests.get(f'{adminUrl}/discover-features/query')
+                    status_code = req.status_code
+                except Exception as ex:
+                    await asyncio.sleep(0.5)
+                    continue
+            result = (status_code, req.json())
+            readiness_future.set_result(result)
+
+        # Query ACA-Py features, which serves as readiness check
+        await query_features(readiness_future)
+        await coro_stdout
+
         log.info("Stopped: acapy process")
 
     async def run_camel_process():
@@ -131,13 +153,25 @@ async def main(start_port: int):
                 '--wallet-key', f'{agent.wallet_key}',
                 '--wallet-type', f'{agent.wallet_type}',
                 '--admin-endpoint', f'http://{agent.internal_host}:{agent_ports["admin"]}',
-                '--user-endpoint', f'http://{agent.internal_host}:{agent_ports["http"]}'],
+                '--user-endpoint', f'http://{agent.internal_host}:{agent_ports["http"]}',
+                '--ws-endpoint', f'ws://{agent.internal_host}:{agent_ports["ws"]}/ws'],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         await asyncio.to_thread(read_process_stdout, "camel", proc)
         log.info("Stopped: camel process")
 
-    # Start ACA-Py & Java process
-    asyncio.create_task(wrap(run_acapy_process()))
+    # Start ACA-Py process
+    readiness_future = asyncio.Future()
+    asyncio.create_task(wrap(run_acapy_process(readiness_future)))
+
+    await readiness_future
+    (code, jobj) = readiness_future.result()
+    assert code == 200, "Unexpected satus code"
+
+    # Show ACA-Py features
+    protocols = jobj['disclose']['protocols'];
+    log.info(f"ACA-Py with {len(protocols)} supported features")
+
+    # Start Camel process
     asyncio.create_task(wrap(run_camel_process()))
 
     # now wait ...

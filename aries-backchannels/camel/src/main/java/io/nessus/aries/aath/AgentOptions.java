@@ -21,4 +21,7 @@ class AgentOptions {
 
     @Option(name = "--user-endpoint", required = true, usage = "Agent user endpoint")
     public String userEndpoint;
+
+    @Option(name = "--ws-endpoint", usage = "Agent websocket endpoint")
+    public String webSocketEndpoint;
 }
