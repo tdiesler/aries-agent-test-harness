@@ -169,7 +169,7 @@ async def main(start_port: int):
 
     # Show ACA-Py features
     protocols = jobj['disclose']['protocols'];
-    log.info(f"ACA-Py with {len(protocols)} supported features")
+    log.info(f"ACA-Py ready with {len(protocols)} supported features")
 
     # Start Camel process
     asyncio.create_task(wrap(run_camel_process()))

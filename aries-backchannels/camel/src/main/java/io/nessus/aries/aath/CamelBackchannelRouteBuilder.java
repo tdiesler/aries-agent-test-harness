@@ -2,6 +2,7 @@ package io.nessus.aries.aath;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -10,9 +11,9 @@ import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.aries.HyperledgerAriesComponent;
-import org.apache.camel.support.service.ServiceSupport;
 import org.apache.http.HttpStatus;
 import org.hyperledger.acy_py.generated.model.ConnectionInvitation;
+import org.hyperledger.aries.AriesClient;
 import org.hyperledger.aries.api.connection.ConnectionReceiveInvitationFilter;
 import org.hyperledger.aries.api.connection.ConnectionRecord;
 import org.hyperledger.aries.api.connection.ConnectionState;
@@ -20,10 +21,9 @@ import org.hyperledger.aries.api.credentials.Credential;
 import org.hyperledger.aries.api.issue_credential_v1.CredentialExchangeState;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialExchange;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialStoreRequest;
-import org.hyperledger.aries.api.multitenancy.WalletRecord;
-import org.hyperledger.aries.api.multitenancy.WalletRecord.WalletSettings;
 import org.hyperledger.aries.api.trustping.PingRequest;
 import org.hyperledger.aries.config.GsonConfig;
+import org.hyperledger.aries.webhook.EventType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,13 +32,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import io.nessus.aries.AgentConfiguration;
-import io.nessus.aries.aath.WebSocketListener.WebSocketState;
 import io.nessus.aries.util.AssertState;
-import io.nessus.aries.wallet.NessusWallet;
+import io.nessus.aries.websocket.WebSocketClient;
+import io.nessus.aries.websocket.WebSocketListener;
+import io.nessus.aries.websocket.WebSocketListener.WebSocketState;
 import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.WebSocket;
 
 public class CamelBackchannelRouteBuilder extends RouteBuilder {
 
@@ -48,11 +46,9 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     static final Gson gson = GsonConfig.defaultConfig();
     
     private String uri;
-    private WebSocket webSocket;
-    private WebSocketListener wslistener;
-    private WebSocketEventHandler wsevents;
+    private WebSocketClient wsclient;
+    private WebSocketListener wsevents;
     private AgentConfiguration agentConfig;
-    // private AriesWebSocketClient adminWebSocketClient;
 
     public CamelBackchannelRouteBuilder(CamelContext context, AgentOptions opts) throws Exception {
         super(context);
@@ -72,29 +68,16 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         
         getHyperledgerAriesComponent()
             .setAgentConfiguration(agentConfig);
-        
-        // Close the WebSocket
-        context.addService(new ServiceSupport() {
-            @Override
-            protected void doShutdown() throws Exception {
-                if (webSocket != null)
-                    webSocket.close(1001, "shutdown");
-            }
-        });
     }
 
-    private HyperledgerAriesComponent getHyperledgerAriesComponent() {
+    public HyperledgerAriesComponent getHyperledgerAriesComponent() {
         CamelContext context = getCamelContext();
         return context.getComponent("hyperledger-aries", HyperledgerAriesComponent.class);
     }
     
-//    private AriesClient adminClient() {
-//        return getHyperledgerAriesComponent().adminClient();
-//    }
-    
-//    private AriesWebSocketClient adminWebSocketClient() {
-//        return getHyperledgerAriesComponent().adminWebSocketClient();
-//    }
+    public AriesClient adminClient() {
+        return getHyperledgerAriesComponent().adminClient();
+    }
     
     @Override
     public void configure() {
@@ -198,42 +181,23 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     //
     private Processor commandStatus = ex -> {
         assertHttpMethod("GET", ex);
-        if (wslistener == null) {
-            WalletSettings settings = new WalletSettings();
-            settings.setWalletName("admin");
-            WalletRecord adminRecord = NessusWallet.builder()
-                    .walletId("00000000")
-                    .settings(settings)
-                    .build();
-            NessusWallet adminWallet = NessusWallet.build(adminRecord);
-            wsevents = new WebSocketEventHandler(adminWallet, null);
-            wslistener = new WebSocketListener("admin", wsevents);
-        }
-        if (wslistener.getState() == WebSocketState.NEW) {
+        if (wsclient == null || wsevents.getWebSocketState() == WebSocketState.NEW) {
+            HyperledgerAriesComponent component = getHyperledgerAriesComponent();
             try {
-                webSocket = openWebSocket(wslistener);
+                wsevents = new WebSocketListener("admin", null, null);
+				wsclient = component.adminWebSocketClient(wsevents)
+						.startRecording(EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL);
             } catch (Exception e) {
                 log.error("{}", e);
             }
         }
-        if (wslistener.getState() != WebSocketState.OPEN) {
+        if (wsevents.getWebSocketState() != WebSocketState.OPEN) {
             ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_SERVICE_UNAVAILABLE);
             ex.getMessage().setBody("");
         } else {
             ex.getMessage().setBody(Map.of("status", "active"));
         }
     };
-    
-    private WebSocket openWebSocket(WebSocketListener listener) {
-        Request.Builder b = new Request.Builder();
-        b.url(agentConfig.getWebSocketUrl());
-        if (agentConfig.getApiKey() != null) {
-            b.header("X-API-Key", agentConfig.getApiKey());
-        }
-        Request request = b.build();
-        OkHttpClient httpClient = new OkHttpClient();
-        return httpClient.newWebSocket(request, listener);
-    }
     
     // Connection -------------------------------------------------------------------------------------------------------------
     
@@ -303,11 +267,10 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("GET", ex);
         String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
         String threadId = httpPath.substring("agent/command/issue-credential/".length());
-        V1CredentialExchange credex = wsevents.getCredentialExchangesV1().stream()
-                .peek(ce -> log.info("{} {}", ce.getState(), ce))
-                .filter(ce -> ce.getState() == CredentialExchangeState.OFFER_RECEIVED)
-                .filter(ce -> threadId.equals(ce.getThreadId()))
-                .findAny().orElse(null);
+        V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
+        		ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
+        		ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+            .findAny().get();
         ex.getMessage().setBody(credex);
     };
     
@@ -317,11 +280,10 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
-        V1CredentialExchange credex = wsevents.getCredentialExchangesV1().stream()
-                .peek(ce -> log.info("{} {}", ce.getState(), ce))
-                .filter(ce -> ce.getState() == CredentialExchangeState.OFFER_RECEIVED)
-                .filter(ce -> threadId.equals(ce.getThreadId()))
-                .findAny().orElse(null);
+        V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
+				ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
+				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+		    .findAny().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
     };
     
@@ -332,15 +294,13 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
-        V1CredentialExchange credex = wsevents.getCredentialExchangesV1().stream()
-                .peek(ce -> log.info("{} {}", ce.getState(), ce))
-                .filter(ce -> ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED)
-                .filter(ce -> threadId.equals(ce.getThreadId()))
-                .findAny().orElse(null);
+        V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
+				ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
+				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+		    .findAny().get();
         // [TODO] Is it correct that Bob uses the treadId as the credentialId for the store request? It becomes both, the credentialId and the referent
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
         ex.getMessage().setBody(V1CredentialStoreRequest.builder().credentialId(threadId).build());
-        wsevents.removeCredentialExchangesV1(threadId);
     };
     
     // agent/command/credential
