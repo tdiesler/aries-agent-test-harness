@@ -1,7 +1,10 @@
 package io.nessus.aries.aath;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -20,7 +23,12 @@ import org.hyperledger.aries.api.connection.ConnectionState;
 import org.hyperledger.aries.api.credentials.Credential;
 import org.hyperledger.aries.api.issue_credential_v1.CredentialExchangeState;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialExchange;
+import org.hyperledger.aries.api.issue_credential_v1.V1CredentialProposalRequest;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialStoreRequest;
+import org.hyperledger.aries.api.present_proof.PresentationExchangeRecord;
+import org.hyperledger.aries.api.present_proof.PresentationExchangeState;
+import org.hyperledger.aries.api.present_proof.PresentationRequest;
+import org.hyperledger.aries.api.present_proof.PresentationRequest.IndyRequestedCredsRequestedAttr;
 import org.hyperledger.aries.api.trustping.PingRequest;
 import org.hyperledger.aries.config.GsonConfig;
 import org.hyperledger.aries.webhook.EventType;
@@ -45,6 +53,9 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     static final MediaType JSON_TYPE = MediaType.get("application/json;charset=utf-8");
     static final Gson gson = GsonConfig.defaultConfig();
     
+    private final EventType[] recordedEventTypes = new EventType[] { 
+    		EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
+
     private String uri;
     private WebSocketClient wsclient;
     private WebSocketListener wsevents;
@@ -101,7 +112,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/connection/receive-invitation"))
                     .process(commandConnectionReceiveInvitation)
-                    .to("hyperledger-aries:admin?service=/connections/receive-invitation")
+                    .toD("hyperledger-aries:admin?service=/connections/receive-invitation")
                     .process(sendResponse)
                     
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/connection/send-ping"))
@@ -115,7 +126,20 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(connectionAfter)
                     .process(sendResponse)
             
+                // Credential -------------------------------------------------------------------------------------------------
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/credential/"))
+                    .toD("hyperledger-aries:admin?service=/credentials")
+                    .process(credentialSelect)
+                    .process(sendResponse)
+                
                 // Issue-Credential -------------------------------------------------------------------------------------------
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/issue-credential/send-proposal"))
+                    .process(commandIssueCredentialSendProposal)
+                    .toD("hyperledger-aries:admin?service=/issue-credential/send-proposal")
+                    .process(credentialExchangeAfter)
+                    .process(sendResponse)
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/issue-credential/send-request"))
                     .process(commandIssueCredentialSendRequest)
@@ -133,11 +157,18 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(credentialExchangeAfter)
                     .process(sendResponse)
                 
-                // Credential -------------------------------------------------------------------------------------------------
+                // Proof ------------------------------------------------------------------------------------------------------
                 
-                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/credential/"))
-                    .to("hyperledger-aries:admin?service=/credentials")
-                    .process(credentialSelect)
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/send-presentation"))
+                	.process(commandProofSendPresentation)
+                    .toD("hyperledger-aries:admin?service=/present-proof/records/${header.pres_ex_id}/send-presentation")
+                    .process(presentationExchangeAfter)
+                    .process(sendResponse)
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/"))
+                	.toD("hyperledger-aries:admin?service=/present-proof/records")
+                	.process(presentProofRecords)
+                    .process(presentationExchangeAfter)
                     .process(sendResponse)
                 
                 // Otherwise --------------------------------------------------------------------------------------------------
@@ -185,8 +216,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             HyperledgerAriesComponent component = getHyperledgerAriesComponent();
             try {
                 wsevents = new WebSocketListener("admin", null, null);
-				wsclient = component.adminWebSocketClient(wsevents)
-						.startRecording(EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL);
+				wsclient = component.adminWebSocketClient(wsevents).startRecording(recordedEventTypes);
             } catch (Exception e) {
                 log.error("{}", e);
             }
@@ -259,6 +289,20 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         log.info("commandConnectionAfter: {}", resmap);
     };
     
+    // Credential -------------------------------------------------------------------------------------------------------------
+    
+    // agent/command/credential
+    //
+    private Processor credentialSelect = ex -> {
+        assertHttpMethod("GET", ex);
+        String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
+        String referent = httpPath.substring("agent/command/credential/".length());
+        Credential cred = Arrays.asList(ex.getMessage().getBody(Credential[].class)).stream()
+            .filter(cr -> cr.getReferent().equals(referent))
+            .findFirst().orElse(null);
+        ex.getMessage().setBody(cred);
+    };
+    
     // Issue Credential -------------------------------------------------------------------------------------------------------
     
     // agent/command/issue-credential
@@ -270,8 +314,17 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
         		ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
         		ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-            .findAny().get();
+            .findFirst().get();
         ex.getMessage().setBody(credex);
+    };
+    
+    // agent/command/issue-credential/send-proposal
+    //
+    private Processor commandIssueCredentialSendProposal = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonData = bodyToJson.apply(ex).getAsJsonObject("data");
+        V1CredentialProposalRequest proposalRequest = gson.fromJson(jsonData, V1CredentialProposalRequest.class);
+        ex.getMessage().setBody(proposalRequest);
     };
     
     // agent/command/issue-credential/send-request
@@ -283,7 +336,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
 				ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
 				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-		    .findAny().get();
+		    .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
     };
     
@@ -297,22 +350,9 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
 				ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
 				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-		    .findAny().get();
-        // [TODO] Is it correct that Bob uses the treadId as the credentialId for the store request? It becomes both, the credentialId and the referent
+		    .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
         ex.getMessage().setBody(V1CredentialStoreRequest.builder().credentialId(threadId).build());
-    };
-    
-    // agent/command/credential
-    //
-    private Processor credentialSelect = ex -> {
-        assertHttpMethod("GET", ex);
-        String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
-        String referent = httpPath.substring("agent/command/credential/".length());
-        Credential cred = Arrays.asList(ex.getMessage().getBody(Credential[].class)).stream()
-            .filter(cr -> cr.getReferent().equals(referent))
-            .findAny().orElse(null);
-        ex.getMessage().setBody(cred);
     };
     
     @SuppressWarnings("unchecked")
@@ -329,6 +369,59 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         ex.getMessage().setBody(resmap);
     };
     
+    // Proof ------------------------------------------------------------------------------------------------------------------
+    
+    // agent/command/proof/send-presentation
+    //
+    private Processor commandProofSendPresentation = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonBody = bodyToJson.apply(ex);
+        String threadId = jsonBody.get("id").getAsString();
+        PresentationExchangeRecord pex = wsevents.awaitPresentProofV1(pe -> 
+        		pe.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+	    	.peek(pe -> log.info("{}", pe))
+	    	.sorted(Collections.reverseOrder((a,b) -> a.getState().ordinal() - b.getState().ordinal()))
+        	.findFirst().get();
+        JsonObject jsonAttrs = jsonBody.getAsJsonObject("data").getAsJsonObject("requested_attributes");
+        Map<String, IndyRequestedCredsRequestedAttr> requestedAttributes = new HashMap<>();
+        for (Entry<String, JsonElement> entry : jsonAttrs.entrySet()) {
+        	IndyRequestedCredsRequestedAttr value = gson.fromJson(entry.getValue(), IndyRequestedCredsRequestedAttr.class);
+			requestedAttributes.put(entry.getKey(), value);
+        }
+        PresentationRequest presentationRequest = PresentationRequest.builder()
+        		.requestedAttributes(requestedAttributes)
+        		.build();
+        String pres_ex_id = pex.getPresentationExchangeId();
+        ex.getMessage().setHeader("pres_ex_id", pres_ex_id);
+        ex.getMessage().setBody(presentationRequest);
+    };
+    
+    // agent/command/proof
+    //
+    private Processor presentProofRecords = ex -> {
+        assertHttpMethod("GET", ex);
+        String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
+        String threadId = httpPath.substring("agent/command/proof/".length());
+        PresentationExchangeRecord pex = Arrays.asList(ex.getMessage().getBody(PresentationExchangeRecord[].class)).stream()
+        	.filter(pe -> pe.getThreadId().equals(threadId))
+        	.findFirst().orElse(null);
+        ex.getMessage().setBody(pex);
+    };
+    
+    @SuppressWarnings("unchecked")
+    private Processor presentationExchangeAfter = ex -> {
+    	PresentationExchangeRecord pex = ex.getMessage().getBody(PresentationExchangeRecord.class);
+        if (pex == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
+            ex.getMessage().setBody("");
+            return;
+        }
+        JsonElement jtree = gson.toJsonTree(pex, PresentationExchangeRecord.class);
+        Map<String, String> resmap = gson.fromJson(jtree, Map.class);
+        resmap.put("state", mapState(pex.getState()));
+        ex.getMessage().setBody(resmap);
+    };
+    
     // State mappings ---------------------------------------------------------------------------------------------------------
     
     // These method are used to translate the agent states passes back in the responses of operations into the states the
@@ -338,11 +431,12 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L2060
 
     // Connection Protocol:
-    // Tests/RFC         |   Aca-py
-    // invited           |   invitation
-    // requested         |   request
-    // responded         |   response
-    // complete          |   active
+    // Tests/RFC         | Aca-py
+    // invited           | invitation
+    // requested         | request
+    // responded         | response
+    // complete          | active
+    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L105
     private String mapState(ConnectionState state) {
         Map<ConnectionState, String> mapping = Map.of(
             ConnectionState.INVITATION, "invited",
@@ -356,20 +450,43 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     }
     
     // Issue Credential Protocol:
-    // Tests/RFC         |   Aca-py
-    // proposal-sent     |   proposal_sent
-    // proposal-received |   proposal_received
-    // offer-sent        |   offer_sent
-    // offer_received    |   offer_received
-    // request-sent      |   request_sent
-    // request-received  |   request_received
-    // credential-issued |   issued
+    // Tests/RFC           | Aca-py
+    // proposal-sent       | proposal_sent
+    // proposal-received   | proposal_received
+    // offer-sent          | offer_sent
+    // offer_received      | offer_received
+    // request-sent        | request_sent
+    // request-received    | request_received
+    // credential-issued   | issued
     // credential-received | credential_received
-    // done              |   credential_acked
+    // done                | credential_acked
+    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L113
     private String mapState(CredentialExchangeState state) {
         Map<CredentialExchangeState, String> mapping = Map.of(
             CredentialExchangeState.CREDENTIAL_ISSUED, "issued",
             CredentialExchangeState.CREDENTIAL_ACKED,  "done");
+        String result = mapping.get(state);
+        if (result == null)
+            result = state.toString().toLowerCase().replace('_', '-');
+        return result;
+    }
+    
+    // Present Proof Protocol:
+    // Tests/RFC             | Aca-py
+    // request-sent          | request_sent
+    // request-received      | request_received
+    // proposal-sent 	     | proposal_sent
+    // proposal-received     | proposal_received
+    // presentation-sent     | presentation_sent
+    // presentation-received | presentation_received
+    // reject-sent 			 | reject_sent
+    // done 				 | verified
+    // done 				 | presentation_acked
+    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L159
+    private String mapState(PresentationExchangeState state) {
+        Map<PresentationExchangeState, String> mapping = Map.of(
+    		PresentationExchangeState.VERIFIED, "done",
+    		PresentationExchangeState.PRESENTATION_ACKED,  "done");
         String result = mapping.get(state);
         if (result == null)
             result = state.toString().toLowerCase().replace('_', '-');

@@ -15,20 +15,26 @@
 ## Run Tests
 
 ```
+# Rebuild the Camel agent
+docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b camel
+
 # Establish a connection between two agents
 ./manage test -d acapy -b camel -t @T001-RFC0160
 
 # Issue a credential with the Issuer beginning with an offer
 ./manage test -d acapy -b camel -t @T003-RFC0036
+
+# Present Proof where the prover does not propose a presentation of the proof and is acknowledged
+./manage test -d acapy -b camel -t @T001-RFC0037
 ```
 
 Run all supported tests
 
 ```
-./manage test -d acapy -b camel -t @T001-RFC0160,@T003-RFC0036
+./manage test -d acapy -b camel -t @T001-RFC0160,@T003-RFC0036,@T001-RFC0037
 ```
 
-## Status AIP-1.0
+## AIP-1.0 Status
 
 | Status | Feature: RFC 0025 DIDComm Transports
 |:------:|:-------------------------------------|
@@ -56,7 +62,7 @@ Run all supported tests
 
 | Status | Feature: RFC 0037 Aries agent present proof
 |:------:|:--------------------------------------------|
-|        |  @T001-RFC0037 @AIP10
+|   x    |  @T001-RFC0037 @AIP10
 |        |  Scenario: Present Proof where the prover does not propose a presentation of the proof and is acknowledged
 |        |  @T001.2-RFC0037 @AIP10
 |        |  Scenario: Present Proof of specific types and proof is acknowledged with a Drivers License credential type
