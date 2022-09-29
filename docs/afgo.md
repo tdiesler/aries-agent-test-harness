@@ -4,9 +4,9 @@
 
 | Runset | ACME<br>(Issuer) | Bob<br>(Holder) | Faber<br>(Verifier) | Mallory<br>(Holder) | Scope | Results | 
 | ------ | :--------------: | :-------------: | :----------------: | :-----------------: | ----- | :-----: | 
-| [acapy-afgo](#runset-acapy-afgo) | acapy-main<br>0.7.4 | afgo-interop<br>unknown | acapy-main<br>0.7.4 | acapy-main<br>0.7.4 | pre-AIP 2.0 | [**13 / 14<br>92%**](https://allure.vonx.io/api/allure-docker-service/projects/acapy-b-afgo/reports/latest/index.html?redirect=false#behaviors) |
-| [afgo-acapy](#runset-afgo-acapy) | afgo-interop<br>unknown | acapy-main<br>0.7.4 | afgo-interop<br>unknown | afgo-interop<br>unknown | pre-AIP 2.0 | [**16 / 17<br>94%**](https://allure.vonx.io/api/allure-docker-service/projects/afgo-b-acapy/reports/latest/index.html?redirect=false#behaviors) |
-| [afgo](#runset-afgo) | afgo-master<br>unknown | afgo-master<br>unknown | afgo-master<br>unknown | afgo-master<br>unknown | AIP 2.0 | [**45 / 45<br>100%**](https://allure.vonx.io/api/allure-docker-service/projects/afgo/reports/latest/index.html?redirect=false#behaviors) |
+| [acapy-afgo](#runset-acapy-afgo) | acapy-main<br>1.0.0-rc0 | afgo-interop<br>unknown | acapy-main<br>1.0.0-rc0 | acapy-main<br>1.0.0-rc0 | pre-AIP 2.0 | [**4 / 14<br>28%**](https://allure.vonx.io/api/allure-docker-service/projects/acapy-b-afgo/reports/latest/index.html?redirect=false#behaviors) |
+| [afgo-acapy](#runset-afgo-acapy) | afgo-interop<br>unknown | acapy-main<br>1.0.0-rc0 | afgo-interop<br>unknown | afgo-interop<br>unknown | pre-AIP 2.0 | [**3 / 17<br>17%**](https://allure.vonx.io/api/allure-docker-service/projects/afgo-b-acapy/reports/latest/index.html?redirect=false#behaviors) |
+| [afgo](#runset-afgo) | afgo-master<br>unknown | afgo-master<br>unknown | afgo-master<br>unknown | afgo-master<br>unknown | AIP 2.0 | [**27 / 45<br>60%**](https://allure.vonx.io/api/allure-docker-service/projects/afgo/reports/latest/index.html?redirect=false#behaviors) |
 
 ## Runset Notes
 
@@ -15,10 +15,10 @@
 Runset Name: ACA-PY to AF-Go
 
 ```tip
-**Latest results: 13 out of 14 (92%)**
+**Latest results: 4 out of 14 (28%)**
 
 
-*Last run: Fri Jul 22 02:14:02 UTC 2022*
+*Last run: Sun Sep 25 00:38:23 UTC 2022*
 ```
 
 #### Current Runset Status
@@ -38,10 +38,10 @@ All of the tests being executed in this runset are passing.
 Runset Name: AF-Go to ACA-PY
 
 ```tip
-**Latest results: 16 out of 17 (94%)**
+**Latest results: 3 out of 17 (17%)**
 
 
-*Last run: Fri Jul 22 03:12:01 UTC 2022*
+*Last run: Sun Sep 25 01:33:14 UTC 2022*
 ```
 
 #### Current Runset Status
@@ -61,10 +61,10 @@ All of the tests being executed in this runset are passing.
 Runset Name: AF-Go to AF-Go
 
 ```tip
-**Latest results: 45 out of 45 (100%)**
+**Latest results: 27 out of 45 (60%)**
 
 
-*Last run: Fri Jul 22 03:30:30 UTC 2022*
+*Last run: Sun Sep 25 01:47:59 UTC 2022*
 ```
 
 #### Current Runset Status
