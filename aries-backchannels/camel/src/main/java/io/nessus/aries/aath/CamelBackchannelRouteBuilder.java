@@ -216,7 +216,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             HyperledgerAriesComponent component = getHyperledgerAriesComponent();
             try {
                 wsevents = new WebSocketListener("admin", null, null);
-				wsclient = component.adminWebSocketClient(wsevents).startRecording(recordedEventTypes);
+				wsclient = component.createAdminWebSocketClient(wsevents).startRecording(recordedEventTypes);
             } catch (Exception e) {
                 log.error("{}", e);
             }
