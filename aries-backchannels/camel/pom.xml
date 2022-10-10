@@ -37,6 +37,7 @@
         <version.args4j>2.33</version.args4j>
         <version.httpcore>4.4.15</version.httpcore>
         <version.nessus.aries>0.2.1-SNAPSHOT</version.nessus.aries>
+        <version.junit>5.7.2</version.junit>
         <version.slf4j>1.7.33</version.slf4j>
         <version.xnio>3.8.7.Final</version.xnio>
 
@@ -50,6 +51,7 @@
         <version-maven-install-plugin>3.0.0-M1</version-maven-install-plugin>
         <version-maven-jar-plugin>3.2.0</version-maven-jar-plugin>
         <version-maven-resources-plugin>3.2.0</version-maven-resources-plugin>
+        <version-maven-surefire-plugin>3.0.0-M7</version-maven-surefire-plugin>
 
         <!-- Common Maven properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -65,6 +67,11 @@
                 <version>${version.apache.camel}</version>
                 <scope>import</scope>
                 <type>pom</type>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-engine</artifactId>
+                <version>${version.junit}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -98,6 +105,7 @@
             <version>${version.httpcore}</version>
         </dependency>
         <dependency>
+            <!-- -Dorg.slf4j.simpleLogger.defaultLogLevel=debug -->
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <version>${version.slf4j}</version>
@@ -108,6 +116,11 @@
             <version>${version.xnio}</version>
         </dependency>
         
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
 	</dependencies>
 	
     <build>
@@ -147,6 +160,11 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-resources-plugin</artifactId>
                     <version>${version-maven-resources-plugin}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${version-maven-surefire-plugin}</version>
                 </plugin>
             </plugins>
         </pluginManagement>

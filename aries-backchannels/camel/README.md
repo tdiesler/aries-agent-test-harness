@@ -4,7 +4,7 @@
 ./manage build -a acapy -a camel
 ```
 
-## Start/Stop the TestHarness
+## Start/Stop the Test Harness
 
 ```
 ./manage start -d acapy -b camel
@@ -12,26 +12,53 @@
 ./manage stop
 ```
 
-## Run Tests
+or in one go
 
 ```
-# Rebuild the Camel agent
+# Rebuild the Test Harness and the Camel agent
 docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b camel
+```
 
-# Establish a connection between two agents
-./manage test -d acapy -b camel -t @T001-RFC0160
+## RFC0025 DIDComm Transports
 
+[Aries RFC 0025: DIDComm Transports](https://github.com/hyperledger/aries-rfcs/tree/main/features/0025-didcomm-transports)
+
+```
+# Create DIDExchange connection between two agents with overlapping transports
+./manage test -d acapy -b camel -t T001-RFC0025
+```
+
+## RFC0036 Issue Credential Protocol 1.0
+
+[Aries RFC 0036: Issue Credential Protocol 1.0](https://github.com/hyperledger/aries-rfcs/tree/main/features/0036-issue-credential)
+
+```
 # Issue a credential with the Issuer beginning with an offer
-./manage test -d acapy -b camel -t @T003-RFC0036
+./manage test -d acapy -b camel -t T003-RFC0036
+```
 
+## RFC0037 Present Proof Protocol 1.0
+
+[Aries RFC 0037: Present Proof Protocol 1.0](https://github.com/hyperledger/aries-rfcs/tree/main/features/0037-present-proof)
+
+```
 # Present Proof where the prover does not propose a presentation of the proof and is acknowledged
-./manage test -d acapy -b camel -t @T001-RFC0037
+./manage test -d acapy -b camel -t T001-RFC0037
 ```
 
-Run all supported tests
+## RFC0160 P2P Connection Protocol
+
+[Connection Protocol](https://github.com/hyperledger/aries-rfcs/tree/main/features/0160-connection-protocol)
 
 ```
-./manage test -d acapy -b camel -t @T001-RFC0160,@T003-RFC0036,@T001-RFC0037
+# Establish a connection between two agents
+./manage test -d acapy -b camel -t T001-RFC0160
+```
+
+## Run all supported tests
+
+```
+./manage test -d acapy -b camel -t T001-RFC0160,T003-RFC0036,T001-RFC0037
 ```
 
 ## AIP-1.0 Status

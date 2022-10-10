@@ -1,0 +1,15 @@
+{
+  "data" : {
+    "@id" : "ebdded7e-b237-46b5-88e4-2deeebe7a825",
+    "@type" : "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/out-of-band/1.0/invitation",
+    "handshake_protocols" : [ "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/didexchange/1.0" ],
+    "label" : "aca-py.Acme",
+    "services" : [ {
+      "id" : "#inline",
+      "type" : "did-communication",
+      "recipientKeys" : [ "did:key:z6Mkvu9La9HzqSt9jnivQKNY4znMf7rfcEeTXFuJtk16gbqE" ],
+      "serviceEndpoint" : "http://host.docker.internal:9021"
+    } ],
+    "use_existing_connection" : false
+  }
+}

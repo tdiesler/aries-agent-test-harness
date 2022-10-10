@@ -3,7 +3,7 @@
 FROM python:3.10.5-slim AS builder_01
 
 RUN apt-get update \
-   && apt-get install -y git gnupg2 software-properties-common curl \
+   && apt-get install -y git gnupg2 software-properties-common curl procps \
    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys CE7709D068DB5E88 \
    && add-apt-repository 'deb https://repo.sovrin.org/sdk/deb bionic stable' \
    && apt-get update \

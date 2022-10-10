@@ -14,6 +14,7 @@ import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.aries.HyperledgerAriesComponent;
+import org.apache.camel.support.service.ServiceSupport;
 import org.apache.http.HttpStatus;
 import org.hyperledger.acy_py.generated.model.ConnectionInvitation;
 import org.hyperledger.aries.AriesClient;
@@ -41,6 +42,7 @@ import com.google.gson.JsonObject;
 
 import io.nessus.aries.AgentConfiguration;
 import io.nessus.aries.util.AssertState;
+import io.nessus.aries.util.ThreadUtils;
 import io.nessus.aries.websocket.WebSocketClient;
 import io.nessus.aries.websocket.WebSocketListener;
 import io.nessus.aries.websocket.WebSocketListener.WebSocketState;
@@ -54,33 +56,71 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     static final Gson gson = GsonConfig.defaultConfig();
     
     private final EventType[] recordedEventTypes = new EventType[] { 
-    		EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
+            EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
 
     private String uri;
     private WebSocketClient wsclient;
     private WebSocketListener wsevents;
     private AgentConfiguration agentConfig;
+    private AgentController agentController;
 
-    public CamelBackchannelRouteBuilder(CamelContext context, AgentOptions opts) throws Exception {
+    public CamelBackchannelRouteBuilder(CamelContext context, AgentController agentController, AgentOptions opts) throws Exception {
         super(context);
+        this.agentController = agentController;
+        this.uri = "http://0.0.0.0:" + opts.ctrlPort;
+
+        // Debug env vars
         for (Map.Entry<String, String> entry : System.getenv().entrySet()) {
             log.debug("{}: {}", entry.getKey(), entry.getValue());
         }
         
-        // [TODO] WebSocket endpoint uses admin port
+        // Construct the AgentConfiguration from cmd line opts
         this.agentConfig = AgentConfiguration.builder()
             .adminUrl(opts.adminEndpoint)
             .userUrl(opts.userEndpoint)
             .build();    
         log.info("Agent config: {}", agentConfig);
-
-        uri = "http://0.0.0.0:" + opts.port;
-        log.info("Start listening on: {}", uri);
         
         getHyperledgerAriesComponent()
             .setAgentConfiguration(agentConfig);
+        
+        // WebSocketListener & WS lifecycle service
+        context.addService(new ServiceSupport() {
+            @Override
+            protected void doShutdown() throws Exception {
+                closeWebSocket();
+            }
+        }, true);
     }
 
+    private WebSocketListener createWebSocketListener() {
+        return new WebSocketListener("admin", null, null);
+    }
+
+    private void closeWebSocket() {
+        if (wsclient != null) {
+            wsclient.close();
+            wsclient = null;
+        }
+    }
+
+    private boolean startWebSocket() {
+        try {
+            wsevents = createWebSocketListener();
+            HyperledgerAriesComponent component = getHyperledgerAriesComponent();
+            wsclient = component.createAdminWebSocketClient(wsevents).startRecording(recordedEventTypes);
+        } catch (Exception e) {
+            log.error("{}", e);
+        }
+        int count = 0;
+        WebSocketState status = wsevents.getWebSocketState();
+        while (++count < 40 && status != WebSocketState.OPEN) {
+            ThreadUtils.sleepWell(500);
+            status = wsevents.getWebSocketState();
+        }
+        return status == WebSocketState.OPEN;
+    };
+    
     public HyperledgerAriesComponent getHyperledgerAriesComponent() {
         CamelContext context = getCamelContext();
         return context.getComponent("hyperledger-aries", HyperledgerAriesComponent.class);
@@ -103,6 +143,12 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(commandStatus)
                     .process(sendResponse)
                     
+                // Agent Start -----------------------------------------------------------------------------------------------
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/agent/start"))
+                    .process(commandAgentStart)
+                    .process(sendResponse)
+                    
                 // Connection -------------------------------------------------------------------------------------------------
                     
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/connection/accept-invitation"))
@@ -123,7 +169,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/connection/"))
                     .process(commandConnection)
                     .toD("hyperledger-aries:admin?service=/connections/${header.conn_id}")
-                    .process(connectionAfter)
+                    .process(connectionRecordAfter)
                     .process(sendResponse)
             
                 // Credential -------------------------------------------------------------------------------------------------
@@ -160,14 +206,14 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 // Proof ------------------------------------------------------------------------------------------------------
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/send-presentation"))
-                	.process(commandProofSendPresentation)
+                    .process(commandProofSendPresentation)
                     .toD("hyperledger-aries:admin?service=/present-proof/records/${header.pres_ex_id}/send-presentation")
                     .process(presentationExchangeAfter)
                     .process(sendResponse)
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/"))
-                	.toD("hyperledger-aries:admin?service=/present-proof/records")
-                	.process(presentProofRecords)
+                    .toD("hyperledger-aries:admin?service=/present-proof/records")
+                    .process(presentProofRecords)
                     .process(presentationExchangeAfter)
                     .process(sendResponse)
                 
@@ -212,20 +258,39 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     //
     private Processor commandStatus = ex -> {
         assertHttpMethod("GET", ex);
-        if (wsclient == null || wsevents.getWebSocketState() == WebSocketState.NEW) {
-            HyperledgerAriesComponent component = getHyperledgerAriesComponent();
-            try {
-                wsevents = new WebSocketListener("admin", null, null);
-				wsclient = component.createAdminWebSocketClient(wsevents).startRecording(recordedEventTypes);
-            } catch (Exception e) {
-                log.error("{}", e);
-            }
+        WebSocketState status = wsevents != null ? wsevents.getWebSocketState() : null;
+        if (status == WebSocketState.OPEN) {
+            ex.getMessage().setBody(Map.of("status", "active"));
+            return;
         }
-        if (wsevents.getWebSocketState() != WebSocketState.OPEN) {
+        if (wsclient != null) {
+            closeWebSocket();
+            ThreadUtils.sleepWell(500);
+        }
+        if (startWebSocket()) {
+            ex.getMessage().setBody(Map.of("status", "active"));
+        } else {
+            status = wsevents.getWebSocketState();
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_SERVICE_UNAVAILABLE);
+            ex.getMessage().setBody(Map.of("status", status.toString().toLowerCase()));
+        }
+    };
+    
+    // Agent Start ------------------------------------------------------------------------------------------------------------
+    
+    // agent/command/agent/start
+    //
+    private Processor commandAgentStart = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonData = bodyToJson.apply(ex).getAsJsonObject("data");
+        JsonObject jsonParams = jsonData.getAsJsonObject("parameters");
+        closeWebSocket();
+        agentController.restartAgent(jsonParams);
+        if (startWebSocket()) {
+            ex.getMessage().setBody(new JsonObject());
+        } else {
             ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_SERVICE_UNAVAILABLE);
             ex.getMessage().setBody("");
-        } else {
-            ex.getMessage().setBody(Map.of("status", "active"));
         }
     };
     
@@ -273,22 +338,6 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         ex.getMessage().setHeader("conn_id", connectionId);
     };
     
-    private Processor connectionAfter = ex -> {
-        ConnectionRecord connectionRecord = ex.getMessage().getBody(ConnectionRecord.class);
-        if (connectionRecord == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
-            return;
-        }
-        ConnectionState state = connectionRecord.getState();
-        Map<String, String> resmap = Map.of (
-                "connection", gson.toJson(connectionRecord),
-                "connection_id", connectionRecord.getConnectionId(),
-                "state", mapState(state));
-        ex.getMessage().setBody(resmap);
-        log.info("commandConnectionAfter: {}", resmap);
-    };
-    
     // Credential -------------------------------------------------------------------------------------------------------------
     
     // agent/command/credential
@@ -312,8 +361,8 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
         String threadId = httpPath.substring("agent/command/issue-credential/".length());
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
-        		ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
-        		ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+                ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
+                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
             .findFirst().get();
         ex.getMessage().setBody(credex);
     };
@@ -334,9 +383,9 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
-				ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
-				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-		    .findFirst().get();
+                ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
+                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+            .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
     };
     
@@ -348,25 +397,11 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
-				ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
-				ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-		    .findFirst().get();
+                ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
+                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+            .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
         ex.getMessage().setBody(V1CredentialStoreRequest.builder().credentialId(threadId).build());
-    };
-    
-    @SuppressWarnings("unchecked")
-    private Processor credentialExchangeAfter = ex -> {
-        V1CredentialExchange credex = ex.getMessage().getBody(V1CredentialExchange.class);
-        if (credex == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
-            return;
-        }
-        JsonElement jtree = gson.toJsonTree(credex, V1CredentialExchange.class);
-        Map<String, String> resmap = gson.fromJson(jtree, Map.class);
-        resmap.put("state", mapState(credex.getState()));
-        ex.getMessage().setBody(resmap);
     };
     
     // Proof ------------------------------------------------------------------------------------------------------------------
@@ -378,19 +413,19 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
         PresentationExchangeRecord pex = wsevents.awaitPresentProofV1(pe -> 
-        		pe.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
-	    	.peek(pe -> log.info("{}", pe))
-	    	.sorted(Collections.reverseOrder((a,b) -> a.getState().ordinal() - b.getState().ordinal()))
-        	.findFirst().get();
+                pe.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+            .peek(pe -> log.info("{}", pe))
+            .sorted(Collections.reverseOrder((a,b) -> a.getState().ordinal() - b.getState().ordinal()))
+            .findFirst().get();
         JsonObject jsonAttrs = jsonBody.getAsJsonObject("data").getAsJsonObject("requested_attributes");
         Map<String, IndyRequestedCredsRequestedAttr> requestedAttributes = new HashMap<>();
         for (Entry<String, JsonElement> entry : jsonAttrs.entrySet()) {
-        	IndyRequestedCredsRequestedAttr value = gson.fromJson(entry.getValue(), IndyRequestedCredsRequestedAttr.class);
-			requestedAttributes.put(entry.getKey(), value);
+            IndyRequestedCredsRequestedAttr value = gson.fromJson(entry.getValue(), IndyRequestedCredsRequestedAttr.class);
+            requestedAttributes.put(entry.getKey(), value);
         }
         PresentationRequest presentationRequest = PresentationRequest.builder()
-        		.requestedAttributes(requestedAttributes)
-        		.build();
+                .requestedAttributes(requestedAttributes)
+                .build();
         String pres_ex_id = pex.getPresentationExchangeId();
         ex.getMessage().setHeader("pres_ex_id", pres_ex_id);
         ex.getMessage().setBody(presentationRequest);
@@ -403,26 +438,12 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
         String threadId = httpPath.substring("agent/command/proof/".length());
         PresentationExchangeRecord pex = Arrays.asList(ex.getMessage().getBody(PresentationExchangeRecord[].class)).stream()
-        	.filter(pe -> pe.getThreadId().equals(threadId))
-        	.findFirst().orElse(null);
+            .filter(pe -> pe.getThreadId().equals(threadId))
+            .findFirst().orElse(null);
         ex.getMessage().setBody(pex);
     };
     
-    @SuppressWarnings("unchecked")
-    private Processor presentationExchangeAfter = ex -> {
-    	PresentationExchangeRecord pex = ex.getMessage().getBody(PresentationExchangeRecord.class);
-        if (pex == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
-            return;
-        }
-        JsonElement jtree = gson.toJsonTree(pex, PresentationExchangeRecord.class);
-        Map<String, String> resmap = gson.fromJson(jtree, Map.class);
-        resmap.put("state", mapState(pex.getState()));
-        ex.getMessage().setBody(resmap);
-    };
-    
-    // State mappings ---------------------------------------------------------------------------------------------------------
+    // State mappings and Other Hacks -----------------------------------------------------------------------------------------
     
     // These method are used to translate the agent states passes back in the responses of operations into the states the
     // test harness expects. The test harness expects states to be as they are written in the Protocol's RFC.
@@ -430,14 +451,29 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     // The following is what the tests/rfc expect vs what aca-py communicates
     // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L2060
 
+    private Processor connectionRecordAfter = ex -> {
+        ConnectionRecord connectionRecord = ex.getMessage().getBody(ConnectionRecord.class);
+        if (connectionRecord == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
+            ex.getMessage().setBody("");
+            return;
+        }
+        ConnectionState state = connectionRecord.getState();
+        Map<String, String> resmap = Map.of (
+                "connection", gson.toJson(connectionRecord),
+                "connection_id", connectionRecord.getConnectionId(),
+                "state", mapConnectionState(state));
+        ex.getMessage().setBody(resmap);
+    };
+    
     // Connection Protocol:
-    // Tests/RFC         | Aca-py
-    // invited           | invitation
-    // requested         | request
-    // responded         | response
-    // complete          | active
+    // Aca-py         | Tests/RFC   
+    // invitation     | invited
+    // request        | requested
+    // response       | responded
+    // active         | complete
     // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L105
-    private String mapState(ConnectionState state) {
+    private String mapConnectionState(ConnectionState state) {
         Map<ConnectionState, String> mapping = Map.of(
             ConnectionState.INVITATION, "invited",
             ConnectionState.REQUEST,    "requested",
@@ -446,50 +482,81 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         String result = mapping.get(state);
         if (result == null)
             result = state.toString().toLowerCase();
+        log.warn("ConnectionState HACK: {} => {}", state, result);
         return result;
     }
     
+    @SuppressWarnings("unchecked")
+    private Processor presentationExchangeAfter = ex -> {
+        PresentationExchangeRecord pex = ex.getMessage().getBody(PresentationExchangeRecord.class);
+        if (pex == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
+            ex.getMessage().setBody("");
+            return;
+        }
+        JsonElement jtree = gson.toJsonTree(pex, PresentationExchangeRecord.class);
+        Map<String, String> resmap = gson.fromJson(jtree, Map.class);
+        resmap.put("state", mapPresentationExchangeState(pex.getState()));
+        ex.getMessage().setBody(resmap);
+    };
+    
+    // Present Proof Protocol:
+    // Aca-py                 | Tests/RFC
+    // request_sent           | request-sent 
+    // request_received       | request-received
+    // proposal_sent          | proposal-sent
+    // proposal_received      | proposal-received
+    // presentation_sent      | presentation-sent
+    // presentation_received  | presentation-received
+    // reject_sent            | reject-sent
+    // verified               | done
+    // presentation_acked     | done
+    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L159
+    private String mapPresentationExchangeState(PresentationExchangeState state) {
+        Map<PresentationExchangeState, String> mapping = Map.of(
+            PresentationExchangeState.VERIFIED, "done",
+            PresentationExchangeState.PRESENTATION_ACKED,  "done");
+        String result = mapping.get(state);
+        if (result == null)
+            result = state.toString().toLowerCase().replace('_', '-');
+        log.warn("PresentationExchangeState HACK: {} => {}", state, result);
+        return result;
+    }
+    
+    @SuppressWarnings("unchecked")
+    private Processor credentialExchangeAfter = ex -> {
+        V1CredentialExchange credex = ex.getMessage().getBody(V1CredentialExchange.class);
+        if (credex == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
+            ex.getMessage().setBody("");
+            return;
+        }
+        JsonElement jtree = gson.toJsonTree(credex, V1CredentialExchange.class);
+        Map<String, String> resmap = gson.fromJson(jtree, Map.class);
+        resmap.put("state", mapCredentialExchangeState(credex.getState()));
+        ex.getMessage().setBody(resmap);
+    };
+    
     // Issue Credential Protocol:
-    // Tests/RFC           | Aca-py
-    // proposal-sent       | proposal_sent
-    // proposal-received   | proposal_received
-    // offer-sent          | offer_sent
-    // offer_received      | offer_received
-    // request-sent        | request_sent
-    // request-received    | request_received
-    // credential-issued   | issued
-    // credential-received | credential_received
-    // done                | credential_acked
+    // Aca-py               | Tests/RFC
+    // proposal_sent        | proposal-sent
+    // proposal_received    | proposal-received
+    // offer_sent           | offer-sent
+    // offer_received       | offer_received
+    // request_sent         | request-sent
+    // request_received     | request-received
+    // issued               | credential-issued
+    // credential_received  | credential-received
+    // credential_acked     | done
     // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L113
-    private String mapState(CredentialExchangeState state) {
+    private String mapCredentialExchangeState(CredentialExchangeState state) {
         Map<CredentialExchangeState, String> mapping = Map.of(
             CredentialExchangeState.CREDENTIAL_ISSUED, "issued",
             CredentialExchangeState.CREDENTIAL_ACKED,  "done");
         String result = mapping.get(state);
         if (result == null)
             result = state.toString().toLowerCase().replace('_', '-');
-        return result;
-    }
-    
-    // Present Proof Protocol:
-    // Tests/RFC             | Aca-py
-    // request-sent          | request_sent
-    // request-received      | request_received
-    // proposal-sent 	     | proposal_sent
-    // proposal-received     | proposal_received
-    // presentation-sent     | presentation_sent
-    // presentation-received | presentation_received
-    // reject-sent 			 | reject_sent
-    // done 				 | verified
-    // done 				 | presentation_acked
-    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L159
-    private String mapState(PresentationExchangeState state) {
-        Map<PresentationExchangeState, String> mapping = Map.of(
-    		PresentationExchangeState.VERIFIED, "done",
-    		PresentationExchangeState.PRESENTATION_ACKED,  "done");
-        String result = mapping.get(state);
-        if (result == null)
-            result = state.toString().toLowerCase().replace('_', '-');
+        log.warn("CredentialExchangeState HACK: {} => {}", state, result);
         return result;
     }
     

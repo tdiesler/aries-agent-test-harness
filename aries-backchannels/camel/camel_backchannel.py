@@ -89,69 +89,18 @@ async def main(start_port: int):
 
     agent = CamelAgentBackchannel('camel', agent_ports)
 
-    async def run_acapy_process(readiness_future):
-        await agent.register_did()
-        log.info("Starting: acapy process ...")
-        proc = subprocess.Popen(
-            ['./camel/bin/run-acapy.sh', 'start',
-                '--label', f'camel.{AGENT_NAME}',
-                '--endpoint', f'{agent.get_agent_endpoint("http")}',
-                '--inbound-transport', 'http', '0.0.0.0', f'{agent_ports["http"]}',
-                '--outbound-transport', 'http',
-                '--admin', '0.0.0.0', f'{agent_ports["admin"]}',
-                '--admin-insecure-mode',
-                '--public-invites',
-                '--wallet-name', f'{agent.wallet_name}',
-                '--wallet-key', f'{agent.wallet_key}',
-                '--wallet-type', f'{agent.wallet_type}',
-                '--monitor-revocation-notification',
-                # '--open-mediation',
-                '--enable-undelivered-queue',
-                '--auto-provision',
-                '--recreate-wallet',
-                '--genesis-url', f'{get_ledger_url()}/genesis',
-                #'--genesis-transactions', f'{genesis_data}',
-                '--seed', f'{agent.seed}',
-                '--storage-type', f'{agent.storage_type}',
-                #'--webhook-url', 'http://host.docker.internal:9023/webhooks',
-                #'--tails-server-base-url', 'http://host.docker.internal:6543',
-                #'--plugin', 'universal_resolver',
-                #'--plugin-config', '/data-mount/plugin-config.yml',
-                '--auto-accept-requests',
-                '--log-level', os.getenv("LOG_LEVEL", "info")],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-        # Start the stdout reaper thread
-        coro_stdout = asyncio.to_thread(read_process_stdout, "acapy", proc)
-
-        async def query_features(readiness_future):
-            status_code = count = 0
-            while count < 40 and status_code != 200:
-                count += 1
-                try:
-                    adminUrl = f'http://{agent.internal_host}:{agent_ports["admin"]}'
-                    req = requests.get(f'{adminUrl}/discover-features/query')
-                    status_code = req.status_code
-                except Exception as ex:
-                    await asyncio.sleep(0.5)
-                    continue
-            result = (status_code, req.json())
-            readiness_future.set_result(result)
-
-        # Query ACA-Py features, which serves as readiness check
-        await query_features(readiness_future)
-        await coro_stdout
-
-        log.info("Stopped: acapy process")
-
     async def run_camel_process():
         log.info("Starting: camel process ...")
         proc = subprocess.Popen(
             ['./camel/bin/run-camel.sh',
-                '--port', str(start_port),
+                '--ctrl-port', str(start_port),
+                '--seed', f'{agent.seed}',
+                '--agent-name', f'camel.{AGENT_NAME}',
                 '--wallet-name', f'{agent.wallet_name}',
                 '--wallet-key', f'{agent.wallet_key}',
                 '--wallet-type', f'{agent.wallet_type}',
+                '--genesis-url', f'{get_ledger_url()}/genesis',
+                '--storage-type', f'{agent.storage_type}',
                 '--admin-endpoint', f'http://{agent.internal_host}:{agent_ports["admin"]}',
                 '--user-endpoint', f'http://{agent.internal_host}:{agent_ports["http"]}',
                 '--ws-endpoint', f'ws://{agent.internal_host}:{agent_ports["ws"]}/ws'],
@@ -159,17 +108,7 @@ async def main(start_port: int):
         await asyncio.to_thread(read_process_stdout, "camel", proc)
         log.info("Stopped: camel process")
 
-    # Start ACA-Py process
-    readiness_future = asyncio.Future()
-    asyncio.create_task(wrap(run_acapy_process(readiness_future)))
-
-    await readiness_future
-    (code, jobj) = readiness_future.result()
-    assert code == 200, "Unexpected satus code"
-
-    # Show ACA-Py features
-    protocols = jobj['disclose']['protocols'];
-    log.info(f"ACA-Py ready with {len(protocols)} supported features")
+    await agent.register_did()
 
     # Start Camel process
     asyncio.create_task(wrap(run_camel_process()))
