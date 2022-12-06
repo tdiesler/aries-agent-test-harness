@@ -310,7 +310,7 @@ def step_impl(context, responder):
                 "connection_id"
             ]
         else:
-            assert False, f"Could not retreive responders connection_id"
+            assert False, f"Could not retrieve responders connection_id; {resp_text}"
 
             # It is probably the case that we are dealing with a Public DID invitation that does not have the webhook message keyed on
             # invitation_id. In this case, try to grab the latest unkeyed message off of the webhook queue.
@@ -321,7 +321,7 @@ def step_impl(context, responder):
             # if "connection_id" in resp_text:
             #     context.connection_id_dict[responder][context.requester_name] = resp_json["connection_id"]
             # else:
-            #     assert False, f'Could not retreive responders connection_id'
+            #     assert False, f'Could not retrieve responders connection_id'
 
     # responder_connection_id = context.connection_id_dict[responder][context.requester_name]
 

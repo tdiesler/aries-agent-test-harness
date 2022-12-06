@@ -1,3 +1,9 @@
+## Build Camel Java Layer
+
+```
+mvn -f aries-backchannels/camel clean install
+```
+
 ## Build ACA-Py + Camel Agents
 
 ```
@@ -25,7 +31,7 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 
 ```
 # Create DIDExchange connection between two agents with overlapping transports
-./manage test -d acapy -b camel -t T001-RFC0025
+./manage test -d acapy -b camel -t @T001-RFC0025 -t ~@Transport_Ws
 ```
 
 ## RFC0036 Issue Credential Protocol 1.0
@@ -58,14 +64,14 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 ## Run all supported tests
 
 ```
-./manage test -d acapy -b camel -t T001-RFC0160,T003-RFC0036,T001-RFC0037
+./manage test -d acapy -b camel -t T001-RFC0025,T003-RFC0036,T001-RFC0037,T001-RFC0160 -t ~@Transport_Ws
 ```
 
 ## AIP-1.0 Status
 
 | Status | Feature: RFC 0025 DIDComm Transports
 |:------:|:-------------------------------------|
-|        |  @T001-RFC0025
+|   x    |  @T001-RFC0025
 |        |  Scenario: Create DIDExchange connection between two agents with overlapping transports
 |        |  @T002-RFC0025
 |        |  Scenario: Create 0160 connection between two agents with overlapping transports

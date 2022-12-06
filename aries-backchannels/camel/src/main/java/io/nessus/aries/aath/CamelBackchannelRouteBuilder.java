@@ -3,11 +3,15 @@ package io.nessus.aries.aath;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
@@ -18,6 +22,7 @@ import org.apache.camel.support.service.ServiceSupport;
 import org.apache.http.HttpStatus;
 import org.hyperledger.acy_py.generated.model.ConnectionInvitation;
 import org.hyperledger.aries.AriesClient;
+import org.hyperledger.aries.api.connection.ConnectionFilter;
 import org.hyperledger.aries.api.connection.ConnectionReceiveInvitationFilter;
 import org.hyperledger.aries.api.connection.ConnectionRecord;
 import org.hyperledger.aries.api.connection.ConnectionState;
@@ -26,6 +31,9 @@ import org.hyperledger.aries.api.issue_credential_v1.CredentialExchangeState;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialExchange;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialProposalRequest;
 import org.hyperledger.aries.api.issue_credential_v1.V1CredentialStoreRequest;
+import org.hyperledger.aries.api.out_of_band.InvitationMessage;
+import org.hyperledger.aries.api.out_of_band.InvitationMessage.InvitationMessageService;
+import org.hyperledger.aries.api.out_of_band.ReceiveInvitationFilter;
 import org.hyperledger.aries.api.present_proof.PresentationExchangeRecord;
 import org.hyperledger.aries.api.present_proof.PresentationExchangeState;
 import org.hyperledger.aries.api.present_proof.PresentationRequest;
@@ -179,6 +187,20 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(credentialSelect)
                     .process(sendResponse)
                 
+                // DID Exchange -----------------------------------------------------------------------------------------------
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/did-exchange/send-request"))
+                    .process(commandDidExchangeSendRequest)
+                    //.toD("hyperledger-aries:admin?service=/credentials")
+                    .process(didExchangeAfter)
+                    .process(sendResponse)
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/did-exchange/"))
+                    .process(commandDidExchange)
+                    //.toD("hyperledger-aries:admin?service=/credentials")
+                    .process(didExchangeAfter)
+                    .process(sendResponse)
+                
                 // Issue-Credential -------------------------------------------------------------------------------------------
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/issue-credential/send-proposal"))
@@ -202,6 +224,21 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(commandIssueCredential)
                     .process(credentialExchangeAfter)
                     .process(sendResponse)
+                
+                // Out-of-Band ------------------------------------------------------------------------------------------------------
+                
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/out-of-band/receive-invitation"))
+                    .process(commandOutOfBandReceiveInvitation)
+                    .toD("hyperledger-aries:admin?service=/out-of-band/receive-invitation")
+                    .process(didExchangeAfter)
+                    .process(sendResponse)
+                
+                /*
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/out-of-band/send-invitation"))
+                    .process(commandOutOfBandSendInvitation)
+                    //.toD("hyperledger-aries:admin?service=/out-of-band/send-invitation-message")
+                    .process(sendResponse)
+                */
                 
                 // Proof ------------------------------------------------------------------------------------------------------
                 
@@ -242,14 +279,20 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         return ex.getMessage().getHeader(name, String.class);
     };
     
+    private Function<Exchange, String> notImplementedResponse = ex -> {
+        String httpPath = ex.getIn().getHeader(Exchange.HTTP_PATH, String.class);
+        ex.getMessage().setHeader(Exchange.CONTENT_TYPE, JSON_TYPE.toString());
+        return gson.toJson(Map.of("error", "NotImplemented: " + httpPath));
+    };
+
     private Processor sendResponse = ex -> {
         Integer code = ex.getMessage().getHeader(Exchange.HTTP_RESPONSE_CODE, Integer.class);
         if (code == null) {
             ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, code = HttpStatus.SC_OK);
-            ex.getMessage().setHeader(Exchange.CONTENT_TYPE, JSON_TYPE.toString());
-            Object obj = ex.getMessage().getBody(Object.class);
-            ex.getMessage().setBody(gson.toJson(obj));
         }
+        ex.getMessage().setHeader(Exchange.CONTENT_TYPE, JSON_TYPE.toString());
+        Object obj = ex.getMessage().getBody(Object.class);
+        ex.getMessage().setBody(gson.toJson(obj));
     };
 
     // Status -----------------------------------------------------------------------------------------------------------------
@@ -271,7 +314,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             ex.getMessage().setBody(Map.of("status", "active"));
         } else {
             status = wsevents.getWebSocketState();
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_SERVICE_UNAVAILABLE);
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
             ex.getMessage().setBody(Map.of("status", status.toString().toLowerCase()));
         }
     };
@@ -289,7 +332,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         if (startWebSocket()) {
             ex.getMessage().setBody(new JsonObject());
         } else {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_SERVICE_UNAVAILABLE);
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
             ex.getMessage().setBody("");
         }
     };
@@ -313,7 +356,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         ConnectionReceiveInvitationFilter receiveInvitationFilter = ConnectionReceiveInvitationFilter.builder()
                 .autoAccept(false)
                 .build();
-        ex.getMessage().setHeader(ConnectionReceiveInvitationFilter.class.getName(), receiveInvitationFilter);
+        ex.getMessage().setHeader("ConnectionReceiveInvitationFilter", receiveInvitationFilter);
         ex.getMessage().setBody(invitation);
     };
     
@@ -350,6 +393,41 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             .filter(cr -> cr.getReferent().equals(referent))
             .findFirst().orElse(null);
         ex.getMessage().setBody(cred);
+    };
+    
+    // DID Exchange -----------------------------------------------------------------------------------------------------------
+    
+    // agent/command/did-exchange/send-request
+    //
+    private Processor commandDidExchangeSendRequest = ex -> {
+        assertHttpMethod("POST", ex);
+        String connectionId = bodyToJson.apply(ex).get("id").getAsString();
+        AssertState.notNull(connectionId, "No connectionId");
+        ConnectionRecord conrec = adminClient().didExchangeAcceptInvitation(connectionId, null).get();
+        AssertState.notNull(conrec, String.format("No ConnectionRecord for %s", connectionId));
+        ex.getMessage().setBody(conrec);
+    };
+    
+    // agent/command/did-exchange/{conn_id}
+    //
+    private Processor commandDidExchange = ex -> {
+        assertHttpMethod("GET", ex);
+        String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
+        String connectionId = httpPath.substring("agent/command/did-exchange/".length());
+        ConnectionRecord conrec = wsevents.awaitConnection(
+                cr -> cr.getState() == ConnectionState.COMPLETED &&
+                cr.getConnectionId().equals(connectionId), 10, TimeUnit.SECONDS)
+                .findFirst().orElse(null);
+        AssertState.notNull(conrec, String.format("No ConnectionRecord for %s", connectionId));
+        ex.getMessage().setBody(conrec);
+    };
+    
+    private Processor didExchangeAfter = ex -> {
+        ConnectionRecord conrec = ex.getMessage().getBody(ConnectionRecord.class);
+        @SuppressWarnings("unchecked")
+        Map<String, String> resmap = new LinkedHashMap<>(gson.fromJson(gson.toJson(conrec), Map.class));
+        resmap.put("state", mapDidExchangeState(conrec.getState()));
+        ex.getMessage().setBody(resmap);
     };
     
     // Issue Credential -------------------------------------------------------------------------------------------------------
@@ -403,6 +481,32 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
         ex.getMessage().setBody(V1CredentialStoreRequest.builder().credentialId(threadId).build());
     };
+    
+    // Out-of-Band ------------------------------------------------------------------------------------------------------
+    
+    // agent/command/out-of-band/receive-invitation
+    //
+    private Processor commandOutOfBandReceiveInvitation = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonData = bodyToJson.apply(ex).getAsJsonObject("data");
+        InvitationMessage<InvitationMessageService> invitation = gson.fromJson(jsonData, InvitationMessage.RFC0067_TYPE);
+        ReceiveInvitationFilter filter = ReceiveInvitationFilter.builder()
+                .useExistingConnection(false)
+                .autoAccept(false)
+                .build();
+        ex.getMessage().setHeader("ReceiveInvitationFilter", filter);
+        ex.getMessage().setBody(invitation);
+    };
+    
+    // agent/command/out-of-band/send-invitation-message
+    /*
+    private Processor commandOutOfBandSendInvitation = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonBody = bodyToJson.apply(ex);
+        ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+        ex.getMessage().setBody(Map.of("error", "send-invitation-message"));
+    };
+    */
     
     // Proof ------------------------------------------------------------------------------------------------------------------
     
@@ -486,6 +590,28 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         return result;
     }
     
+    // DID Exchange Requester:
+    // Aca-py       | Tests/RFC
+    // initial      | invitation-sent
+    // invitation   | invitation-received
+    // request      | request-sent
+    // response     | response-received
+    // active       | completed
+    // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L183
+    private String mapDidExchangeState(ConnectionState state) {
+        Map<ConnectionState, String> mapping = Map.of(
+            ConnectionState.INIT,         "invitation-sent",
+            ConnectionState.INVITATION, "invitation-received",
+            ConnectionState.REQUEST,    "request-sent",
+            ConnectionState.RESPONSE,   "response-received",
+            ConnectionState.ACTIVE,     "completed");
+        String result = mapping.get(state);
+        if (result == null)
+            result = state.toString().toLowerCase();
+        log.warn("ConnectionState HACK: {} => {}", state, result);
+        return result;
+    }
+    
     @SuppressWarnings("unchecked")
     private Processor presentationExchangeAfter = ex -> {
         PresentationExchangeRecord pex = ex.getMessage().getBody(PresentationExchangeRecord.class);
@@ -559,12 +685,4 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         log.warn("CredentialExchangeState HACK: {} => {}", state, result);
         return result;
     }
-    
-    // Not Implemented --------------------------------------------------------------------------------------------------------
-    
-    private Function<Exchange, String> notImplementedResponse = ex -> {
-        String httpPath = ex.getIn().getHeader(Exchange.HTTP_PATH, String.class);
-        return gson.toJson(Map.of("error", "NotImplemented: " + httpPath));
-    };
-
 }

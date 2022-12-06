@@ -10,6 +10,7 @@ from aiohttp import (
 import json
 import os.path
 from time import sleep
+from typing import Tuple
 
 ######################################################################
 # coroutine utilities
@@ -45,7 +46,7 @@ def run_coroutine_with_kwargs(coroutine, *args, **kwargs):
 
 async def make_agent_backchannel_request(
     method, path, data=None, text=False, params=None
-) -> (int, str):
+) -> Tuple[int, str]:
     params = {k: v for (k, v) in (params or {}).items() if v is not None}
     client_session: ClientSession = ClientSession()
     async with client_session.request(method, path, json=data, params=params) as resp:
@@ -72,7 +73,7 @@ def request_log(method, agent_url, resp_status, resp_text, payload=''):
             print(f'Res: {resp_status} {sorted_payload(resp_text)}', file=fout)
             print(f'-----', file=fout)
 
-def agent_backchannel_GET(url, topic, operation=None, id=None) -> (int, str):
+def agent_backchannel_GET(url, topic, operation=None, id=None) -> Tuple[int, str]:
     agent_url = url + topic + "/"
     if operation:
         agent_url = agent_url + operation + "/"
@@ -87,7 +88,7 @@ def agent_backchannel_GET(url, topic, operation=None, id=None) -> (int, str):
 
 def agent_backchannel_POST(
     url, topic, operation=None, id=None, data=None
-) -> (int, str):
+) -> Tuple[int, str]:
     agent_url = url + topic + "/"
     payload = {}
     if data:
@@ -106,7 +107,7 @@ def agent_backchannel_POST(
     return (resp_status, resp_text)
 
 
-def agent_backchannel_DELETE(url, topic, id=None, data=None) -> (int, str):
+def agent_backchannel_DELETE(url, topic, id=None, data=None) -> Tuple[int, str]:
     agent_url = url + topic + "/"
     if id:
         agent_url = agent_url + id
