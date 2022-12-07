@@ -1,24 +1,21 @@
-use std::sync::Mutex;
-use actix_web::{web, HttpResponse, Responder, get};
-use crate::Agent;
 use crate::error::HarnessResult;
+use crate::HarnessAgent;
+use actix_web::{get, web, HttpResponse, Responder};
+use std::sync::RwLock;
 
-impl Agent {
+impl HarnessAgent {
     pub fn get_status_json(&self) -> HarnessResult<String> {
         Ok(json!({ "status": self.status }).to_string())
     }
 
     pub fn get_public_did(&self) -> HarnessResult<String> {
-        Ok(json!({ "did": self.config.did.to_string() }).to_string())
+        Ok(json!({ "did": self.aries_agent.issuer_did() }).to_string())
     }
 }
 
 #[get("/status")]
-pub async fn get_status(agent: web::Data<Mutex<Agent>>) -> impl Responder {
-    HttpResponse::Ok()
-        .body(
-            agent.lock().unwrap().get_status_json().unwrap()
-        )
+pub async fn get_status(agent: web::Data<RwLock<HarnessAgent>>) -> impl Responder {
+    HttpResponse::Ok().body(agent.read().unwrap().get_status_json().unwrap())
 }
 
 #[get("/version")]
@@ -27,19 +24,15 @@ pub async fn get_version() -> impl Responder {
 }
 
 #[get("/did")]
-pub async fn get_public_did(agent: web::Data<Mutex<Agent>>) -> impl Responder {
-    HttpResponse::Ok()
-        .body(
-            agent.lock().unwrap().get_public_did().unwrap()
-        )
+pub async fn get_public_did(agent: web::Data<RwLock<HarnessAgent>>) -> impl Responder {
+    HttpResponse::Ok().body(agent.read().unwrap().get_public_did().unwrap())
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg
-        .service(
-            web::scope("/command")
-                .service(get_status)
-                .service(get_version)
-                .service(get_public_did)
-        );
+    cfg.service(
+        web::scope("/command")
+            .service(get_status)
+            .service(get_version)
+            .service(get_public_did),
+    );
 }

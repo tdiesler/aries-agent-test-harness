@@ -1,9 +1,12 @@
-use actix_web::{
-    HttpResponseBuilder, error, http::StatusCode, HttpResponse,
+use actix_web::{error, http::StatusCode, HttpResponse, HttpResponseBuilder};
+use aries_vcx_agent::aries_vcx;
+use aries_vcx_agent::aries_vcx::indy::primitives::credential_definition::{
+    CredentialDefConfigBuilderError, RevocationDetailsBuilderError,
 };
+use aries_vcx_agent::aries_vcx::indy::proofs::proof_request::ProofRequestDataBuilderError;
+use aries_vcx_agent::aries_vcx::messages::error::MessagesError;
+use aries_vcx_agent::AgentError;
 use derive_more::{Display, Error};
-use aries_vcx::handlers::issuance::credential_def::{RevocationDetailsBuilderError, CredentialDefConfigBuilderError};
-use aries_vcx::libindy::proofs::proof_request::ProofRequestDataBuilderError;
 
 pub type HarnessResult<T> = Result<T, HarnessError>;
 
@@ -13,41 +16,52 @@ pub enum HarnessErrorType {
     InternalServerError,
     #[display(fmt = "Request not accepted")]
     RequestNotAcceptedError,
+    #[display(fmt = "Request not received")]
+    RequestNotReceived,
     #[display(fmt = "Not found")]
     NotFoundError,
     #[display(fmt = "Invalid JSON")]
     InvalidJson,
     #[display(fmt = "Protocol error")]
     ProtocolError,
+    #[display(fmt = "Invalid state for requested operation")]
+    InvalidState,
+    #[display(fmt = "Encryption error")]
+    EncryptionError,
+    #[display(fmt = "Multiple credential definitions found")]
+    MultipleCredDefinitions,
 }
 
 #[derive(Debug, Display, Error, Clone)]
 #[display(fmt = "Error: {}", message)]
 pub struct HarnessError {
     pub message: String,
-    pub kind: HarnessErrorType
+    pub kind: HarnessErrorType,
 }
 
 impl error::ResponseError for HarnessError {
     fn error_response(&self) -> HttpResponse {
-        HttpResponseBuilder::new(self.status_code())
-            .body(self.to_string())
+        error!("{}", self.to_string());
+        HttpResponseBuilder::new(self.status_code()).body(self.to_string())
     }
 
     fn status_code(&self) -> StatusCode {
         match self.kind {
-            HarnessErrorType::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
-            HarnessErrorType::RequestNotAcceptedError |
-                HarnessErrorType::InvalidJson => StatusCode::NOT_ACCEPTABLE,
+            HarnessErrorType::RequestNotAcceptedError
+            | HarnessErrorType::RequestNotReceived
+            | HarnessErrorType::InvalidJson => StatusCode::NOT_ACCEPTABLE,
             HarnessErrorType::NotFoundError => StatusCode::NOT_FOUND,
-            HarnessErrorType::ProtocolError => StatusCode::INTERNAL_SERVER_ERROR,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
 
 impl HarnessError {
     pub fn from_msg(kind: HarnessErrorType, msg: &str) -> Self {
-        HarnessError { kind, message: msg.to_string() }
+        HarnessError {
+            kind,
+            message: msg.to_string(),
+        }
     }
 
     pub fn from_kind(kind: HarnessErrorType) -> Self {
@@ -59,36 +73,37 @@ impl HarnessError {
 impl std::convert::From<aries_vcx::error::VcxError> for HarnessError {
     fn from(vcx_err: aries_vcx::error::VcxError) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        HarnessError { message: vcx_err.to_string(), kind }
+        HarnessError {
+            message: vcx_err.to_string(),
+            kind,
+        }
     }
 }
 
-impl std::convert::From<pickledb::error::Error> for HarnessError {
-    fn from(pickle_err: pickledb::error::Error) -> HarnessError {
-        let kind = HarnessErrorType::NotFoundError;
-        let message = format!(
-            "Failed to load / save object from memory; err: {:?}", pickle_err.to_string()
-        );
-        HarnessError { message: message.to_string(), kind }
+impl std::convert::From<aries_vcx::agency_client::error::AgencyClientError> for HarnessError {
+    fn from(
+        agency_client_error: aries_vcx::agency_client::error::AgencyClientError,
+    ) -> HarnessError {
+        let kind = HarnessErrorType::InternalServerError;
+        HarnessError {
+            message: agency_client_error.to_string(),
+            kind,
+        }
     }
 }
 
 impl std::convert::From<serde_json::Error> for HarnessError {
     fn from(serde_err: serde_json::Error) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "(De)serialization failed; err: {:?}", serde_err.to_string()
-        );
-        HarnessError { message: message.to_string(), kind }
+        let message = format!("(De)serialization failed; err: {:?}", serde_err.to_string());
+        HarnessError { message, kind }
     }
 }
 
 impl std::convert::From<std::io::Error> for HarnessError {
     fn from(io_err: std::io::Error) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "I/O error: {:?}", io_err.to_string()
-        );
+        let message = format!("I/O error: {:?}", io_err.to_string());
         HarnessError { message, kind }
     }
 }
@@ -96,9 +111,7 @@ impl std::convert::From<std::io::Error> for HarnessError {
 impl std::convert::From<reqwest::Error> for HarnessError {
     fn from(rw_err: reqwest::Error) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "Reqwest error: {:?}", rw_err.to_string()
-        );
+        let message = format!("Reqwest error: {:?}", rw_err.to_string());
         HarnessError { message, kind }
     }
 }
@@ -106,9 +119,7 @@ impl std::convert::From<reqwest::Error> for HarnessError {
 impl std::convert::From<RevocationDetailsBuilderError> for HarnessError {
     fn from(err: RevocationDetailsBuilderError) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "RevocationDetailsBuilderError: {:?}", err.to_string()
-        );
+        let message = format!("RevocationDetailsBuilderError: {:?}", err.to_string());
         HarnessError { message, kind }
     }
 }
@@ -116,9 +127,7 @@ impl std::convert::From<RevocationDetailsBuilderError> for HarnessError {
 impl std::convert::From<CredentialDefConfigBuilderError> for HarnessError {
     fn from(err: CredentialDefConfigBuilderError) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "CredentialDefConfigBuilderError: {:?}", err.to_string()
-        );
+        let message = format!("CredentialDefConfigBuilderError: {:?}", err.to_string());
         HarnessError { message, kind }
     }
 }
@@ -126,9 +135,23 @@ impl std::convert::From<CredentialDefConfigBuilderError> for HarnessError {
 impl std::convert::From<ProofRequestDataBuilderError> for HarnessError {
     fn from(err: ProofRequestDataBuilderError) -> HarnessError {
         let kind = HarnessErrorType::InternalServerError;
-        let message = format!(
-            "ProofRequestDataBuilderError: {:?}", err.to_string()
-        );
+        let message = format!("ProofRequestDataBuilderError: {:?}", err.to_string());
+        HarnessError { message, kind }
+    }
+}
+
+impl std::convert::From<AgentError> for HarnessError {
+    fn from(err: AgentError) -> HarnessError {
+        let kind = HarnessErrorType::InternalServerError;
+        let message = format!("AgentError: {:?}", err.to_string());
+        HarnessError { message, kind }
+    }
+}
+
+impl std::convert::From<MessagesError> for HarnessError {
+    fn from(err: MessagesError) -> HarnessError {
+        let kind = HarnessErrorType::InternalServerError;
+        let message = format!("MessagesError: {:?}", err.to_string());
         HarnessError { message, kind }
     }
 }
