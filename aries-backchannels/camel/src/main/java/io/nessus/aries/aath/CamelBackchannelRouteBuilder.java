@@ -59,41 +59,26 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     private final EventType[] recordedEventTypes = new EventType[] { 
             EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
 
-    private String uri;
-    private AgentConfiguration agentConfig;
+    private String http_uri;
     private AgentController agentController;
 
     public CamelBackchannelRouteBuilder(CamelContext context, AgentController agentController, AgentOptions opts) throws Exception {
         super(context);
         this.agentController = agentController;
-        this.uri = "http://0.0.0.0:" + opts.ctrlPort;
-
-        // Debug env vars
-        for (Map.Entry<String, String> entry : System.getenv().entrySet()) {
-            log.debug("{}: {}", entry.getKey(), entry.getValue());
-        }
-        
-        // Construct the AgentConfiguration from cmd line opts
-        this.agentConfig = AgentConfiguration.builder()
-            .adminUrl(opts.adminEndpoint)
-            .userUrl(opts.userEndpoint)
-            .build();    
-        log.info("Agent config: {}", agentConfig);
-        
-        getHyperledgerAriesComponent()
-            .setAgentConfiguration(agentConfig);
+        this.http_uri = "http://0.0.0.0:" + opts.ctrlPort;
     }
 
-    public HyperledgerAriesComponent getHyperledgerAriesComponent() {
+    HyperledgerAriesComponent getHyperledgerAriesComponent() {
         CamelContext context = getCamelContext();
         return context.getComponent("hyperledger-aries", HyperledgerAriesComponent.class);
     }
     
-    public AriesClient adminClient() {
+    AriesClient adminClient() {
         return getHyperledgerAriesComponent().adminClient();
     }    
 
     private boolean startWebSocket() {
+        log.info("Creating admin websocket client ...");
         HyperledgerAriesComponent component = getHyperledgerAriesComponent();
         component.createAdminWebSocketClient().startRecording(recordedEventTypes);
 
@@ -104,6 +89,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             ThreadUtils.sleepWell(500);
             status = wsevents.getWebSocketState();
         }
+        log.info("Admin websocket status: {}", status);
         return status == WebSocketState.OPEN;
     }
 
@@ -120,7 +106,10 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     @Override
     public void configure() {
 
-        from("undertow:" + uri + "?matchOnUriPrefix=true")
+        // from("undertow:ws://0.0.0.0:9034")
+        //     .log("WsRequest: ${headers.CamelHttpPath} ${body}");
+
+        from("undertow:" + http_uri + "?matchOnUriPrefix=true")
             .log("Request: ${headers.CamelHttpMethod} ${headers.CamelHttpPath} ${body}")
             .choice()
 
@@ -236,8 +225,6 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 // Otherwise --------------------------------------------------------------------------------------------------
                 
                 .otherwise()
-                    .setHeader(Exchange.HTTP_RESPONSE_CODE, () -> HttpStatus.SC_NOT_IMPLEMENTED)
-                    .setHeader(Exchange.CONTENT_TYPE, () -> JSON_TYPE.toString())
                     .setBody(notImplementedResponse)
             .end()
             .log("Response: ${headers.CamelHttpResponseCode} ${body}");
@@ -260,6 +247,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     
     private Function<Exchange, String> notImplementedResponse = ex -> {
         String httpPath = ex.getIn().getHeader(Exchange.HTTP_PATH, String.class);
+        ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
         ex.getMessage().setHeader(Exchange.CONTENT_TYPE, JSON_TYPE.toString());
         return gson.toJson(Map.of("error", "NotImplemented: " + httpPath));
     };
@@ -393,6 +381,11 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     
     private Processor didExchangeAfter = ex -> {
         ConnectionRecord conrec = ex.getMessage().getBody(ConnectionRecord.class);
+        if (conrec == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+            ex.getMessage().setBody(Map.of("error", "No connection record"));
+            return;
+        }
         @SuppressWarnings("unchecked")
         Map<String, String> resmap = new LinkedHashMap<>(gson.fromJson(gson.toJson(conrec), Map.class));
         resmap.put("state", mapDidExchangeState(conrec.getState()));
@@ -529,16 +522,16 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     // https://github.com/hyperledger/aries-agent-test-harness/blob/main/aries-backchannels/acapy/acapy_backchannel.py#L2060
 
     private Processor connectionRecordAfter = ex -> {
-        ConnectionRecord connectionRecord = ex.getMessage().getBody(ConnectionRecord.class);
-        if (connectionRecord == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
+        ConnectionRecord conrec = ex.getMessage().getBody(ConnectionRecord.class);
+        if (conrec == null) {
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+            ex.getMessage().setBody(Map.of("error", "No connection record"));
             return;
         }
-        ConnectionState state = connectionRecord.getState();
+        ConnectionState state = conrec.getState();
         Map<String, String> resmap = Map.of (
-                "connection", gson.toJson(connectionRecord),
-                "connection_id", connectionRecord.getConnectionId(),
+                "connection", gson.toJson(conrec),
+                "connection_id", conrec.getConnectionId(),
                 "state", mapConnectionState(state));
         ex.getMessage().setBody(resmap);
     };
@@ -589,8 +582,8 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     private Processor presentationExchangeAfter = ex -> {
         PresentationExchangeRecord pex = ex.getMessage().getBody(PresentationExchangeRecord.class);
         if (pex == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+            ex.getMessage().setBody(Map.of("error", "No presentation exchange record"));
             return;
         }
         JsonElement jtree = gson.toJsonTree(pex, PresentationExchangeRecord.class);
@@ -626,8 +619,8 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     private Processor credentialExchangeAfter = ex -> {
         V1CredentialExchange credex = ex.getMessage().getBody(V1CredentialExchange.class);
         if (credex == null) {
-            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_NOT_FOUND);
-            ex.getMessage().setBody("");
+            ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
+            ex.getMessage().setBody(Map.of("error", "No credential exchange record"));
             return;
         }
         JsonElement jtree = gson.toJsonTree(credex, V1CredentialExchange.class);

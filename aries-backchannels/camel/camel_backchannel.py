@@ -83,7 +83,7 @@ async def main(start_port: int):
         http=start_port + 1,
         admin=start_port + 2,
         # webhook=start_port + 3,
-        ws=start_port + 2,
+        ws=start_port + 4,
     )
     log.info("AgentPorts: %s", agent_ports)
 

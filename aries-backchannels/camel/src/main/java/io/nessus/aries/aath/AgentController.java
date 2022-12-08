@@ -122,7 +122,7 @@ public class AgentController {
         		"--recreate-wallet",
         		"--log-level", logLevel));
         
-		log.info("Starting agent with: {}", String.join(" ", command));
+		log.info("Starting agent with: {}", String.join(" ", command).replace("--", "\n--"));
 		
 		shutdownLatch = new CountDownLatch(1);
 		CountDownLatch startupLatch = new CountDownLatch(1);

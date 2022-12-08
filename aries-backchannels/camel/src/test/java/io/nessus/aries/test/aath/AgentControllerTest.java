@@ -19,12 +19,14 @@
  */
 package io.nessus.aries.test.aath;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.hyperledger.aries.config.GsonConfig;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.kohsuke.args4j.CmdLineParser;
 
 import com.google.gson.Gson;
 
@@ -39,7 +41,20 @@ public class AgentControllerTest extends AbstractTest {
     @Test
 	public void testAgentRestart() throws Exception {
     	
-    	AgentOptions opts = new AgentOptions.Builder().build();
+        AgentOptions opts = new AgentOptions();
+        CmdLineParser parser = new CmdLineParser(opts);
+        parser.parseArgument(List.of(
+			"--ctrl-port", "9030",
+			"--agent-name", "camel.Bob",
+			"--wallet-name", "admin",
+			"--wallet-key", "adminkey",
+			"--wallet-type", "indy",
+			"--admin-endpoint", "http://localhost:9032",
+			"--user-endpoint", "http://localhost:9031",
+			"--ws-endpoint", "ws://localhost:9032/ws",
+			"--genesis-url", "http://host.docker.internal:9000/genesis",
+			"--storage-type", "indy"
+		));
     	AgentController ctrl = new AgentController(opts);
     	
     	// Runtime.getRuntime().exec("/usr/local/bin/docker rm -f acapy");
