@@ -4,25 +4,19 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.stream.Collectors;
-
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.aries.HyperledgerAriesComponent;
-import org.apache.camel.support.service.ServiceSupport;
 import org.apache.http.HttpStatus;
 import org.hyperledger.acy_py.generated.model.ConnectionInvitation;
 import org.hyperledger.aries.AriesClient;
-import org.hyperledger.aries.api.connection.ConnectionFilter;
 import org.hyperledger.aries.api.connection.ConnectionReceiveInvitationFilter;
 import org.hyperledger.aries.api.connection.ConnectionRecord;
 import org.hyperledger.aries.api.connection.ConnectionState;
@@ -51,7 +45,6 @@ import com.google.gson.JsonObject;
 import io.nessus.aries.AgentConfiguration;
 import io.nessus.aries.util.AssertState;
 import io.nessus.aries.util.ThreadUtils;
-import io.nessus.aries.websocket.WebSocketClient;
 import io.nessus.aries.websocket.WebSocketListener;
 import io.nessus.aries.websocket.WebSocketListener.WebSocketState;
 import okhttp3.MediaType;
@@ -67,8 +60,6 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
             EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
 
     private String uri;
-    private WebSocketClient wsclient;
-    private WebSocketListener wsevents;
     private AgentConfiguration agentConfig;
     private AgentController agentController;
 
@@ -91,44 +82,8 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         
         getHyperledgerAriesComponent()
             .setAgentConfiguration(agentConfig);
-        
-        // WebSocketListener & WS lifecycle service
-        context.addService(new ServiceSupport() {
-            @Override
-            protected void doShutdown() throws Exception {
-                closeWebSocket();
-            }
-        }, true);
     }
 
-    private WebSocketListener createWebSocketListener() {
-        return new WebSocketListener("admin", null, null);
-    }
-
-    private void closeWebSocket() {
-        if (wsclient != null) {
-            wsclient.close();
-            wsclient = null;
-        }
-    }
-
-    private boolean startWebSocket() {
-        try {
-            wsevents = createWebSocketListener();
-            HyperledgerAriesComponent component = getHyperledgerAriesComponent();
-            wsclient = component.createAdminWebSocketClient(wsevents).startRecording(recordedEventTypes);
-        } catch (Exception e) {
-            log.error("{}", e);
-        }
-        int count = 0;
-        WebSocketState status = wsevents.getWebSocketState();
-        while (++count < 40 && status != WebSocketState.OPEN) {
-            ThreadUtils.sleepWell(500);
-            status = wsevents.getWebSocketState();
-        }
-        return status == WebSocketState.OPEN;
-    };
-    
     public HyperledgerAriesComponent getHyperledgerAriesComponent() {
         CamelContext context = getCamelContext();
         return context.getComponent("hyperledger-aries", HyperledgerAriesComponent.class);
@@ -136,8 +91,32 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     
     public AriesClient adminClient() {
         return getHyperledgerAriesComponent().adminClient();
+    }    
+
+    private boolean startWebSocket() {
+        HyperledgerAriesComponent component = getHyperledgerAriesComponent();
+        component.createAdminWebSocketClient().startRecording(recordedEventTypes);
+
+        int count = 0;
+        WebSocketListener wsevents = getWebSocketListener();
+        WebSocketState status = wsevents.getWebSocketState();
+        while (++count < 40 && status != WebSocketState.OPEN) {
+            ThreadUtils.sleepWell(500);
+            status = wsevents.getWebSocketState();
+        }
+        return status == WebSocketState.OPEN;
     }
-    
+
+    private void closeWebSocket() {
+        HyperledgerAriesComponent component = getHyperledgerAriesComponent();
+        component.closeAdminWebSocketClient();
+    }
+
+    private WebSocketListener getWebSocketListener() {
+        HyperledgerAriesComponent component = getHyperledgerAriesComponent();
+        return component.getAdminWebSocketListener();
+    }
+
     @Override
     public void configure() {
 
@@ -191,13 +170,13 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/did-exchange/send-request"))
                     .process(commandDidExchangeSendRequest)
-                    //.toD("hyperledger-aries:admin?service=/credentials")
+                    .toD("hyperledger-aries:admin?service=/didexchange/${header.conn_id}/accept-invitation")
                     .process(didExchangeAfter)
                     .process(sendResponse)
                 
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/did-exchange/"))
                     .process(commandDidExchange)
-                    //.toD("hyperledger-aries:admin?service=/credentials")
+                    .toD("hyperledger-aries:admin?service=/didexchange/${header.conn_id}")
                     .process(didExchangeAfter)
                     .process(sendResponse)
                 
@@ -301,39 +280,35 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     //
     private Processor commandStatus = ex -> {
         assertHttpMethod("GET", ex);
-        WebSocketState status = wsevents != null ? wsevents.getWebSocketState() : null;
+        WebSocketListener wsevents = getWebSocketListener();
+        if (wsevents == null) {
+            startWebSocket();
+            wsevents = getWebSocketListener();
+        }
+        WebSocketState status = wsevents.getWebSocketState();
         if (status == WebSocketState.OPEN) {
             ex.getMessage().setBody(Map.of("status", "active"));
-            return;
-        }
-        if (wsclient != null) {
-            closeWebSocket();
-            ThreadUtils.sleepWell(500);
-        }
-        if (startWebSocket()) {
-            ex.getMessage().setBody(Map.of("status", "active"));
         } else {
-            status = wsevents.getWebSocketState();
             ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
             ex.getMessage().setBody(Map.of("status", status.toString().toLowerCase()));
         }
     };
-    
+
     // Agent Start ------------------------------------------------------------------------------------------------------------
     
     // agent/command/agent/start
     //
     private Processor commandAgentStart = ex -> {
         assertHttpMethod("POST", ex);
+        closeWebSocket();
         JsonObject jsonData = bodyToJson.apply(ex).getAsJsonObject("data");
         JsonObject jsonParams = jsonData.getAsJsonObject("parameters");
-        closeWebSocket();
         agentController.restartAgent(jsonParams);
         if (startWebSocket()) {
-            ex.getMessage().setBody(new JsonObject());
+            ex.getMessage().setBody(jsonParams);
         } else {
             ex.getMessage().setHeader(Exchange.HTTP_RESPONSE_CODE, HttpStatus.SC_INTERNAL_SERVER_ERROR);
-            ex.getMessage().setBody("");
+            ex.getMessage().setBody(Map.of("error", "Cannot start web socket"));
         }
     };
     
@@ -403,9 +378,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         String connectionId = bodyToJson.apply(ex).get("id").getAsString();
         AssertState.notNull(connectionId, "No connectionId");
-        ConnectionRecord conrec = adminClient().didExchangeAcceptInvitation(connectionId, null).get();
-        AssertState.notNull(conrec, String.format("No ConnectionRecord for %s", connectionId));
-        ex.getMessage().setBody(conrec);
+        ex.getMessage().setHeader("conn_id", connectionId);
     };
     
     // agent/command/did-exchange/{conn_id}
@@ -414,12 +387,8 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("GET", ex);
         String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
         String connectionId = httpPath.substring("agent/command/did-exchange/".length());
-        ConnectionRecord conrec = wsevents.awaitConnection(
-                cr -> cr.getState() == ConnectionState.COMPLETED &&
-                cr.getConnectionId().equals(connectionId), 10, TimeUnit.SECONDS)
-                .findFirst().orElse(null);
-        AssertState.notNull(conrec, String.format("No ConnectionRecord for %s", connectionId));
-        ex.getMessage().setBody(conrec);
+        AssertState.notNull(connectionId, "No connectionId");
+        ex.getMessage().setHeader("conn_id", connectionId);
     };
     
     private Processor didExchangeAfter = ex -> {
@@ -438,6 +407,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("GET", ex);
         String httpPath = messageHeader.apply(ex, Exchange.HTTP_PATH);
         String threadId = httpPath.substring("agent/command/issue-credential/".length());
+        WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
                 ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
@@ -460,6 +430,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
+        WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
                 ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
@@ -474,6 +445,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
+        WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
                 ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
@@ -516,6 +488,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         assertHttpMethod("POST", ex);
         JsonObject jsonBody = bodyToJson.apply(ex);
         String threadId = jsonBody.get("id").getAsString();
+        WebSocketListener wsevents = getWebSocketListener();
         PresentationExchangeRecord pex = wsevents.awaitPresentProofV1(pe -> 
                 pe.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
             .peek(pe -> log.info("{}", pe))
