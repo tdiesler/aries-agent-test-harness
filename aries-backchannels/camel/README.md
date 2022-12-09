@@ -49,7 +49,7 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 
 ```
 # Present Proof where the prover does not propose a presentation of the proof and is acknowledged
-./manage test -d acapy -b camel -t T001-RFC0037
+./manage test -d acapy -b camel -t T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.5-RFC0037
 ```
 
 ## RFC0160 P2P Connection Protocol
@@ -64,10 +64,10 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 ## Run all supported tests
 
 ```
-./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025 -t ~@Transport_Ws \
-&& ./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036 \
-&& ./manage test -d acapy -b camel -t T001-RFC0037 \
-&& ./manage test -d acapy -b camel -t T001-RFC0160
+./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025 -t ~@Transport_Ws && \
+./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036 && \
+./manage test -d acapy -b camel -t T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.5-RFC0037 && \
+./manage test -d acapy -b camel -t T001-RFC0160
 ```
 
 ## Next
@@ -75,7 +75,7 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 ```
 docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./manage build -a camel && ./manage start -d acapy -b camel
 
-./manage test -d acapy -b camel -t T002-RFC0025 -t ~@Transport_Ws
+./manage test -d acapy -b camel -t T001-RFC0160,T002-RFC0160,T003-RFC0160,T004-RFC0160,T005-RFC0160,T006-RFC0160,T007-RFC0160
 ```
 
 ## AIP-1.0 Status
@@ -98,10 +98,10 @@ docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./man
 | Status | Feature: RFC 0037 Aries agent present proof
 |:------:|:--------------------------------------------|
 |   x    | @T001-RFC0037 @AIP10 Present Proof where the prover does not propose a presentation of the proof and is acknowledged
-|        | @T001.2-RFC0037 @AIP10 Present Proof of specific types and proof is acknowledged with a Drivers License credential type
-|        | @T001.3-RFC0037 @AIP10 Present Proof of specific types and proof is acknowledged with a Biological Indicators credential type
+|   x    | @T001.2-RFC0037 @AIP10 Present Proof of specific types and proof is acknowledged with a Drivers License credential type
+|   x    | @T001.3-RFC0037 @AIP10 Present Proof of specific types and proof is acknowledged with a Biological Indicators credential type
 |        | @T001.4-RFC0037 @AIP10 Present Proof of specific types and proof is acknowledged with multiple credential types
-|        | @T001.5-RFC0037 @AIP10 Present Proof where the prover does not propose a presentation of the proof and is acknowledged
+|   x    | @T001.5-RFC0037 @AIP10 Present Proof where the prover does not propose a presentation of the proof and is acknowledged
 |        | @T003-RFC0037 @AIP10 Present Proof where the prover has proposed the presentation of proof in response to a presentation request and is acknowledged
 |        | @T003.1-RFC0037 @AIP10 Present Proof where the prover has proposed the presentation of proof from a different credential in response to a presentation request and is acknowledged
 |        | @T004-RFC0037 @AIP10 Present Proof where the verifier and prover are connectionless, prover has proposed the presentation of proof, and is acknowledged
