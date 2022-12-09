@@ -58,24 +58,19 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 
 ```
 # Establish a connection between two agents
-./manage test -d acapy -b camel -t T001-RFC0160
+./manage test -d acapy -b camel -t T001-RFC0160,T002-RFC0160
 ```
 
 ## Run all supported tests
 
 ```
-./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025 -t ~@Transport_Ws && \
-./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036 && \
-./manage test -d acapy -b camel -t T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.5-RFC0037 && \
-./manage test -d acapy -b camel -t T001-RFC0160
+./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025,T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036,T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.5-RFC0037,T001-RFC0160,T002-RFC0160 -t ~@Transport_Ws
 ```
 
 ## Next
 
 ```
 docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./manage build -a camel && ./manage start -d acapy -b camel
-
-./manage test -d acapy -b camel -t T001-RFC0160,T002-RFC0160,T003-RFC0160,T004-RFC0160,T005-RFC0160,T006-RFC0160,T007-RFC0160
 ```
 
 ## AIP-1.0 Status
@@ -111,7 +106,7 @@ docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./man
 | Status | Feature: RFC 0160 Aries agent connection functions
 |:------:|:---------------------------------------------------|
 |   x    | @T001-RFC0160 Establish a connection between two agents
-|        | @T002-RFC0160 Connection established between two agents but inviter sends next message to establish full connection state
+|   x    | @T002-RFC0160 Connection established between two agents but inviter sends next message to establish full connection state
 |        | @T003-RFC0160 Inviter Sends invitation for one agent second agent tries after connection
 |        | @T004-RFC0160 Inviter Sends invitation for one agent second agent tries during first share phase
 |        | @T005-RFC0160 Inviter Sends invitation for multiple agents
