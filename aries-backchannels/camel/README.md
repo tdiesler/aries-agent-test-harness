@@ -40,7 +40,7 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 
 ```
 # Issue a credential with the Issuer beginning with an offer
-./manage test -d acapy -b camel -t T003-RFC0036
+./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036
 ```
 
 ## RFC0037 Present Proof Protocol 1.0
@@ -64,7 +64,10 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 ## Run all supported tests
 
 ```
-./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025,T003-RFC0036,T001-RFC0037,T001-RFC0160 -t ~@Transport_Ws
+./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025 -t ~@Transport_Ws \
+&& ./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036 \
+&& ./manage test -d acapy -b camel -t T001-RFC0037 \
+&& ./manage test -d acapy -b camel -t T001-RFC0160
 ```
 
 ## Next
@@ -86,9 +89,9 @@ docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./man
 | Status | Feature: RFC 0036 Aries agent issue credential
 |:------:|:-----------------------------------------------|
 |   x    | @T001-RFC0036 @AIP10 Issue a credential with the Holder beginning with a proposal
-|        | @T002-RFC0036 @AIP10 Issue a credential with the Holder beginning with a proposal with negotiation
-|        | @T003-RFC0036 @AIP10 Issue a credential with the Issuer beginning with an offer
-|        | @T004-RFC0036 @AIP10 Issue a credential with the Issuer beginning with an offer with negotiation
+|   x    | @T002-RFC0036 @AIP10 Issue a credential with the Holder beginning with a proposal with negotiation
+|   x    | @T003-RFC0036 @AIP10 Issue a credential with the Issuer beginning with an offer
+|   x    | @T004-RFC0036 @AIP10 Issue a credential with the Issuer beginning with an offer with negotiation
 |        | @T005-RFC0036 @AIP10 Issue a credential with negotiation beginning from a credential request
 |        | @T006-RFC0036 @AIP10 Issue a credential with the Holder beginning with a request and is accepted
 
