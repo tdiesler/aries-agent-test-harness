@@ -79,6 +79,7 @@ async def wrap(function):
 async def main(start_port: int):
     log = logger()
 
+    # Agent port configuration
     agent_ports = AgentPorts(
         http=start_port + 1,
         admin=start_port + 2,
@@ -93,17 +94,19 @@ async def main(start_port: int):
         log.info("Starting: camel process ...")
         proc = subprocess.Popen(
             ['./camel/bin/run-camel.sh',
+                # Host/Port config for the Agent
                 '--ctrl-port', str(start_port),
+                '--agent-host', f'{agent.internal_host}',
+                '--agent-admin-port', f'{agent_ports["admin"]}',
+                '--agent-http-port', f'{agent_ports["http"]}',
+                '--agent-ws-port', f'{agent_ports["ws"]}',
                 '--seed', f'{agent.seed}',
                 '--agent-name', f'camel.{AGENT_NAME}',
                 '--wallet-name', f'{agent.wallet_name}',
                 '--wallet-key', f'{agent.wallet_key}',
                 '--wallet-type', f'{agent.wallet_type}',
                 '--genesis-url', f'{get_ledger_url()}/genesis',
-                '--storage-type', f'{agent.storage_type}',
-                '--admin-endpoint', f'http://{agent.internal_host}:{agent_ports["admin"]}',
-                '--user-endpoint', f'http://{agent.internal_host}:{agent_ports["http"]}',
-                '--ws-endpoint', f'ws://{agent.internal_host}:{agent_ports["ws"]}/ws'],
+                '--storage-type', f'{agent.storage_type}'],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         await asyncio.to_thread(read_process_stdout, "camel", proc)
         log.info("Stopped: camel process")

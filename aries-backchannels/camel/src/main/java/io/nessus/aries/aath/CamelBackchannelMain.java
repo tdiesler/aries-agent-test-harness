@@ -37,10 +37,13 @@ public class CamelBackchannelMain {
         
         try (CamelContext camelctx = new DefaultCamelContext()) {
 
+            String agentAdminEndpoint = String.format("http://%s:%d", opts.agentHost, opts.agentAdminPort);
+            String agentHttpEndpoint = String.format("http://%s:%d", opts.agentHost, opts.agentHttpPort);
+            
             // Construct the AgentConfiguration from cmd line opts
             AgentConfiguration agentConfig = AgentConfiguration.builder()
-                .adminUrl(opts.adminEndpoint)
-                .userUrl(opts.userEndpoint)
+                .adminUrl(agentAdminEndpoint)
+                .userUrl(agentHttpEndpoint)
                 .build();    
             log.info("Agent config: {}", agentConfig);
             

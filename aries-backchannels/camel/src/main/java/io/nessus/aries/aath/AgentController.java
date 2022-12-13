@@ -3,14 +3,10 @@ package io.nessus.aries.aath;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
-
 import org.hyperledger.aries.config.GsonConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,37 +28,24 @@ public class AgentController {
     
     private final AgentOptions opts;
     private CountDownLatch shutdownLatch;
-    private List<String> endpoints;
     private boolean restarting;
     private Process process;
-	private URL adminURL;
-	private URL userURL;
 	
 	public AgentController(AgentOptions opts) throws IOException {
 		this.opts = opts;
-        this.adminURL = new URL(opts.adminEndpoint);
-        this.userURL = new URL(opts.userEndpoint);
 	}
 
-	public List<String> getEndpoints() {
-		return Collections.unmodifiableList(endpoints);
-	}
+	// public List<String> getEndpoints() {
+	// 	return Collections.unmodifiableList(endpoints);
+	// }
 
-	public String getPreferredEndpoint() {
-		String result = null;
-		if (endpoints != null && endpoints.size() > 0) 
-			result = endpoints.get(0);
-		log.info("Preferred endpoint: {}", result);
-		return result;
-	}
-
-	public URL getAdminURL() {
-		return adminURL;
-	}
-
-	public URL getUserURL() {
-		return userURL;
-	}
+	// public String getPreferredEndpoint() {
+	// 	String result = null;
+	// 	if (endpoints != null && endpoints.size() > 0) 
+	// 		result = endpoints.get(0);
+	// 	log.info("Preferred endpoint: {}", result);
+	// 	return result;
+	// }
 
 	public void startAgent() throws IOException {
 		startAgent(new JsonObject());
@@ -73,41 +56,40 @@ public class AgentController {
 		
         String logLevel = getenv("LOG_LEVEL", "info");
         
-        BiConsumer<String, List<String>> transportsAppender = (direction, command) -> {
-            List<String> transports = new ArrayList<>(List.of("http"));
-            String paramName = direction + "_transports";
-			if (params.get(paramName) != null) {
-            	transports.clear();
-            	params.get(paramName).getAsJsonArray()
-            		.forEach(el -> transports.add(el.getAsString()));
-            }
-			if (direction.equals("inbound")) {
-				for (String protocol : transports) {
-					String endpoint = String.format("%s://%s:%d", protocol, userURL.getHost(), userURL.getPort());
-					command.addAll(List.of("--endpoint", endpoint));
-					endpoints.add(endpoint);
-				}
-				for (String protocol : transports) {
-					command.addAll(List.of("--inbound-transport", protocol, "0.0.0.0", "" + userURL.getPort()));
-				}
-			}
-			if (direction.equals("outbound")) {
-				for (String protocol : transports) {
-					command.addAll(List.of("--outbound-transport", protocol));
-				}
-			}
-        };
+        // BiConsumer<String, List<String>> transportsAppender = (direction, command) -> {
+        //     List<String> transports = new ArrayList<>(List.of("http"));
+        //     String paramName = direction + "_transports";
+		// 	if (params.get(paramName) != null) {
+        //     	transports.clear();
+        //     	params.get(paramName).getAsJsonArray()
+        //     		.forEach(el -> transports.add(el.getAsString()));
+        //     }
+		// 	if (direction.equals("inbound")) {
+		// 		for (String protocol : transports) {
+		// 			String endpoint = String.format("%s://%s:%d", protocol, userURL.getHost(), userURL.getPort());
+		// 			command.addAll(List.of("--endpoint", endpoint));
+		// 			endpoints.add(endpoint);
+		// 		}
+		// 		for (String protocol : transports) {
+		// 			command.addAll(List.of("--inbound-transport", protocol, "0.0.0.0", "" + userURL.getPort()));
+		// 		}
+		// 	}
+		// 	if (direction.equals("outbound")) {
+		// 		for (String protocol : transports) {
+		// 			command.addAll(List.of("--outbound-transport", protocol));
+		// 		}
+		// 	}
+        // };
         
-        List<String> command = new ArrayList<>(List.of("/usr/local/bin/python3", "-m", "aries_cloudagent", "start", 
-    			"--label", opts.agentName));
+        List<String> command = new ArrayList<>(List.of("/usr/local/bin/python3", "-m", "aries_cloudagent", "start"));
         
-        endpoints = new ArrayList<>();
-        transportsAppender.accept("inbound", command);
-        transportsAppender.accept("outbound", command);
-        
+        // endpoints = new ArrayList<>();
+        // transportsAppender.accept("inbound", command);
+        // transportsAppender.accept("outbound", command);
+
 		command.addAll(List.of(
-				"--seed", opts.seed,
-        		"--admin", "0.0.0.0", "" + adminURL.getPort(), 
+				"--label", opts.agentName,
+        		"--admin", "0.0.0.0", "" + opts.agentAdminPort, 
         		"--admin-insecure-mode",
         		"--genesis-url", opts.genesisUrl,
         		"--storage-type", opts.storageType,
@@ -120,7 +102,14 @@ public class AgentController {
         		"--monitor-revocation-notification",
         		"--public-invites",
         		"--recreate-wallet",
-        		"--log-level", logLevel));
+        		"--log-level", logLevel,
+				"--endpoint", String.format("http://%s:%d",  opts.agentHost, opts.agentHttpPort),
+				"--inbound-transport", "http", "0.0.0.0", "" + opts.agentHttpPort,
+				"--outbound-transport", "http"));
+
+		if (opts.seed != null) {
+			command.addAll(List.of("--seed", opts.seed));
+		}
         
 		log.info("Starting agent with: {}", String.join(" ", command).replace("--", "\n--"));
 		
@@ -255,7 +244,7 @@ public class AgentController {
 	public boolean isAlive() {
 		OkHttpClient client = new OkHttpClient();
 		Request request = new Request.Builder()
-	      .url(opts.adminEndpoint + "/status/live")
+	      .url(agentAdminEndpoint() + "/status/live")
 	      .build();		
 		try {
 			Response response = client.newCall(request).execute();
@@ -268,7 +257,7 @@ public class AgentController {
 	public boolean isReady() {
 		OkHttpClient client = new OkHttpClient();
 		Request request = new Request.Builder()
-	      .url(opts.adminEndpoint + "/status/ready")
+	      .url(agentAdminEndpoint() + "/status/ready")
 	      .build();		
 		try {
 			Response response = client.newCall(request).execute();
@@ -278,7 +267,11 @@ public class AgentController {
 		}
 	}
 	
-    private String getenv(String key, String altval) {
+    private String agentAdminEndpoint() {
+        return String.format("http://%s:%d", opts.agentHost, opts.agentAdminPort);
+    }
+	
+	private String getenv(String key, String altval) {
     	String val = System.getenv(key);
     	return val != null ? val : altval;
     }

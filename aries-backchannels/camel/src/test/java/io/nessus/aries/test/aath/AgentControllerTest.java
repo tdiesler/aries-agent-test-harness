@@ -45,13 +45,14 @@ public class AgentControllerTest extends AbstractTest {
         CmdLineParser parser = new CmdLineParser(opts);
         parser.parseArgument(List.of(
 			"--ctrl-port", "9030",
+			"--agent-host", "localhost",
+			"--agent-admin-port", "9032",
+			"--agent-http-port", "9031",
+			"--agent-ws-port", "9034",
 			"--agent-name", "camel.Bob",
 			"--wallet-name", "admin",
 			"--wallet-key", "adminkey",
 			"--wallet-type", "indy",
-			"--admin-endpoint", "http://localhost:9032",
-			"--user-endpoint", "http://localhost:9031",
-			"--ws-endpoint", "ws://localhost:9032/ws",
 			"--genesis-url", "http://host.docker.internal:9000/genesis",
 			"--storage-type", "indy"
 		));
@@ -59,7 +60,7 @@ public class AgentControllerTest extends AbstractTest {
     	
     	// Runtime.getRuntime().exec("/usr/local/bin/docker rm -f acapy");
     	
-    	// Start the AcaPy
+    	// Start AcaPy
     	ctrl.startAgent();
 		Assertions.assertTrue(ctrl.awaitLiveness(30, TimeUnit.SECONDS));
 		Assertions.assertTrue(ctrl.awaitReadiness(30, TimeUnit.SECONDS));

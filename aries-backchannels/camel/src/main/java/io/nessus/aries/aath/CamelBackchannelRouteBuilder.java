@@ -42,7 +42,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
-import io.nessus.aries.AgentConfiguration;
 import io.nessus.aries.util.AssertState;
 import io.nessus.aries.util.ThreadUtils;
 import io.nessus.aries.websocket.WebSocketListener;
@@ -59,13 +58,13 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
     private final EventType[] recordedEventTypes = new EventType[] { 
             EventType.CONNECTIONS, EventType.ISSUE_CREDENTIAL, EventType.PRESENT_PROOF };
 
-    private String http_uri;
     private AgentController agentController;
+    private AgentOptions opts;
 
     public CamelBackchannelRouteBuilder(CamelContext context, AgentController agentController, AgentOptions opts) throws Exception {
         super(context);
         this.agentController = agentController;
-        this.http_uri = "http://0.0.0.0:" + opts.ctrlPort;
+        this.opts = opts;
     }
 
     HyperledgerAriesComponent getHyperledgerAriesComponent() {
@@ -105,12 +104,13 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
 
     @Override
     public void configure() {
+        configureCtrlRoute(opts.ctrlPort);
+    }
 
-        // from("undertow:ws://0.0.0.0:9034")
-        //     .log("WsRequest: ${headers.CamelHttpPath} ${body}");
+    private void configureCtrlRoute(int ctrlPort) {
 
-        from("undertow:" + http_uri + "?matchOnUriPrefix=true")
-            .log("Request: ${headers.CamelHttpMethod} ${headers.CamelHttpPath} ${body}")
+        from("undertow:http://0.0.0.0:" + ctrlPort + "?matchOnUriPrefix=true")
+            .log("Ctrl Request: ${headers.CamelHttpMethod} ${headers.CamelHttpPath} ${body}")
             .choice()
 
                 // Agent Status -----------------------------------------------------------------------------------------------
@@ -227,7 +227,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                 .otherwise()
                     .setBody(notImplementedResponse)
             .end()
-            .log("Response: ${headers.CamelHttpResponseCode} ${body}");
+            .log("Ctrl Response: ${headers.CamelHttpResponseCode} ${body}");
     }
 
     // Utility functions ------------------------------------------------------------------------------------------------------
