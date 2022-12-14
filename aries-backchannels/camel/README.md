@@ -64,9 +64,11 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 ## Run all supported tests
 
 ```
+./manage test -d acapy -b camel -t AcceptanceTest -t AIP10 -t ~@wip -t ~@Transport_Ws
+
 ./manage test -d acapy -b camel -t T001-RFC0025,T002-RFC0025 -t ~@Transport_Ws && \
 ./manage test -d acapy -b camel -t T001-RFC0036,T002-RFC0036,T003-RFC0036,T004-RFC0036 && \
-./manage test -d acapy -b camel -t T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.4-RFC0037,T001.5-RFC0037 && \
+./manage test -d acapy -b camel -t T001-RFC0037,T001.2-RFC0037,T001.3-RFC0037,T001.4-RFC0037,T001.5-RFC0037,T003-RFC0037,T003.1-RFC0037,T006-RFC0037 && \
 ./manage test -d acapy -b camel -t T001-RFC0160,T002-RFC0160
 ```
 
@@ -74,10 +76,10 @@ docker rm -f bob_agent && ./manage build -a camel && ./manage start -d acapy -b 
 
 ```
 docker rm -f bob_agent && mvn -f aries-backchannels/camel clean install && ./manage build -a camel && ./manage start -d acapy -b camel
-./manage test -d acapy -b camel -t T001.4-RFC0037
+./manage test -d acapy -b camel -t T001-RFC0023
 
 docker rm -f bob_agent && ./manage start -d acapy -b acapy
-./manage test -d acapy -b acapy -t T001.4-RFC0037
+./manage test -d acapy -b acapy -t T001-RFC0023
 ```
 
 ## AIP-1.0 Status
@@ -103,9 +105,9 @@ Generated with `./manage tests -t AcceptanceTest -t AIP10 -t ~@wip -md`
 |   x    | @T001.3-RFC0037 Present Proof of specific types and proof is acknowledged with a Biological Indicators credential type
 |   x    | @T001.4-RFC0037 Present Proof of specific types and proof is acknowledged with multiple credential types
 |   x    | @T001.5-RFC0037 Present Proof where the prover does not propose a presentation of the proof and is acknowledged
-|        | @T003-RFC0037 Present Proof where the prover has proposed the presentation of proof in response to a presentation request and is acknowledged
-|        | @T003.1-RFC0037 Present Proof where the prover has proposed the presentation of proof from a different credential in response to a presentation request and is acknowledged
-|        | @T006-RFC0037 Present Proof where the prover starts with a proposal the presentation of proof and is acknowledged
+|   x    | @T003-RFC0037 Present Proof where the prover has proposed the presentation of proof in response to a presentation request and is acknowledged
+|   x    | @T003.1-RFC0037 Present Proof where the prover has proposed the presentation of proof from a different credential in response to a presentation request and is acknowledged
+|   x    | @T006-RFC0037 Present Proof where the prover starts with a proposal the presentation of proof and is acknowledged
 
 | Status | Feature: RFC 0160 Aries agent connection functions
 |:------:|:---------------------------------------------------|
@@ -125,8 +127,8 @@ Generated with `./manage tests -t AcceptanceTest -t AIP20 -t ~@wip -md`
 
 | Status | Feature: RFC 0025 DIDComm Transports
 |:------:|:-------------------------------------|
-|        | @T001-RFC0025 Create DIDExchange connection between two agents with overlapping transports
-|        | @T002-RFC0025 Create 0160 connection between two agents with overlapping transports
+|   x    | @T001-RFC0025 Create DIDExchange connection between two agents with overlapping transports
+|   x    | @T002-RFC0025 Create 0160 connection between two agents with overlapping transports
 
 | Status | Feature: RFC 0036 Aries agent issue credential
 |:------:|:-----------------------------------------------|

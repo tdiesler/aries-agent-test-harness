@@ -28,6 +28,7 @@ import org.hyperledger.aries.api.issue_credential_v1.V1CredentialStoreRequest;
 import org.hyperledger.aries.api.out_of_band.InvitationMessage;
 import org.hyperledger.aries.api.out_of_band.InvitationMessage.InvitationMessageService;
 import org.hyperledger.aries.api.out_of_band.ReceiveInvitationFilter;
+import org.hyperledger.aries.api.present_proof.PresentProofProposal;
 import org.hyperledger.aries.api.present_proof.PresentationExchangeRecord;
 import org.hyperledger.aries.api.present_proof.PresentationExchangeState;
 import org.hyperledger.aries.api.present_proof.PresentationRequest;
@@ -60,6 +61,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
 
     private AgentController agentController;
     private AgentOptions opts;
+    private int wstimeout = 20;
 
     public CamelBackchannelRouteBuilder(CamelContext context, AgentController agentController, AgentOptions opts) throws Exception {
         super(context);
@@ -216,6 +218,12 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
                     .process(presentationExchangeAfter)
                     .process(sendResponse)
                 
+                .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/send-proposal"))
+                    .process(commandProofSendProposal)
+                    .toD("hyperledger-aries:admin?service=/present-proof/send-proposal")
+                    .process(presentationExchangeAfter)
+                    .process(sendResponse)
+            
                 .when(header(Exchange.HTTP_PATH).startsWith("agent/command/proof/"))
                     .toD("hyperledger-aries:admin?service=/present-proof/records")
                     .process(presentProofRecords)
@@ -403,7 +411,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
-                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+                ce.getThreadId().equals(threadId), wstimeout, TimeUnit.SECONDS)
             .findFirst().get();
         ex.getMessage().setBody(credex);
     };
@@ -426,7 +434,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.OFFER_RECEIVED && 
-                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+                ce.getThreadId().equals(threadId), wstimeout, TimeUnit.SECONDS)
             .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
     };
@@ -441,7 +449,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         WebSocketListener wsevents = getWebSocketListener();
         V1CredentialExchange credex = wsevents.awaitIssueCredentialV1(ce -> 
                 ce.getState() == CredentialExchangeState.CREDENTIAL_RECEIVED && 
-                ce.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+                ce.getThreadId().equals(threadId), wstimeout, TimeUnit.SECONDS)
             .findFirst().get();
         ex.getMessage().setHeader("cred_ex_id", credex.getCredentialExchangeId());
         ex.getMessage().setBody(V1CredentialStoreRequest.builder().credentialId(threadId).build());
@@ -483,7 +491,7 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         String threadId = jsonBody.get("id").getAsString();
         WebSocketListener wsevents = getWebSocketListener();
         PresentationExchangeRecord pex = wsevents.awaitPresentProofV1(pe -> 
-                pe.getThreadId().equals(threadId), 10, TimeUnit.SECONDS)
+                pe.getThreadId().equals(threadId), wstimeout, TimeUnit.SECONDS)
             .peek(pe -> log.info("{}", pe))
             .sorted(Collections.reverseOrder((a,b) -> a.getState().ordinal() - b.getState().ordinal()))
             .findFirst().get();
@@ -501,6 +509,15 @@ public class CamelBackchannelRouteBuilder extends RouteBuilder {
         ex.getMessage().setBody(presentationRequest);
     };
     
+    // agent/command/proof/send-proposal
+    //
+    private Processor commandProofSendProposal = ex -> {
+        assertHttpMethod("POST", ex);
+        JsonObject jsonData = bodyToJson.apply(ex).getAsJsonObject("data");
+        PresentProofProposal proofProposal = gson.fromJson(jsonData, PresentProofProposal.class);
+        ex.getMessage().setBody(proofProposal);
+    };
+
     // agent/command/proof
     //
     private Processor presentProofRecords = ex -> {
